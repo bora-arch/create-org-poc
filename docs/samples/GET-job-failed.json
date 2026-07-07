@@ -1,17 +1,21 @@
 {
   "jobId": "8b1b2f2c-4a11-4e7a-9c6b-7a1c3b2a0e11",
   "status": "FAILED",
-  "currentStep": "UPLOAD_LOGO",
+  "currentStep": "ASSIGN_RECOMMENDATION_MODELS",
   "progress": 3,
-  "totalSteps": 8,
+  "totalSteps": 12,
   "steps": [
-    { "name": "CREATE_ORG",             "status": "SUCCESS" },
-    { "name": "SETUP_ORG",              "status": "SUCCESS" },
-    { "name": "UPLOAD_LOGO",            "status": "FAILED", "errorCode": "401", "errorMessage": "Unauthorized" },
-    { "name": "CONFIGURE_VOCABULARIES", "status": "NOT_STARTED" },
-    { "name": "CONFIGURE_USERS",        "status": "NOT_STARTED" },
-    { "name": "CONFIGURE_PERMISSIONS",  "status": "NOT_STARTED" },
-    { "name": "CONFIGURE_BRANDING",     "status": "NOT_STARTED" },
-    { "name": "FINAL_VALIDATION",       "status": "NOT_STARTED" }
+    { "name": "CREATE_ORG_IN_FSP",                  "status": "SUCCESS" },
+    { "name": "SETUP_ORG_IN_FSP",                   "status": "SUCCESS" },
+    { "name": "ASSIGN_RECOMMENDATION_MODELS",       "status": "FAILED", "errorCode": "401", "errorMessage": "Unauthorized" },
+    { "name": "SETUP_DEFAULT_BRANDING_PREFERENCES", "status": "NOT_STARTED" },
+    { "name": "SETUP_DEFAULT_PRM_PREFERENCES",      "status": "NOT_STARTED" },
+    { "name": "SETUP_RFS_UI_PREFERENCES",           "status": "NOT_STARTED" },
+    { "name": "SETUP_DEFAULT_VOCABULARIES_IN_CE",   "status": "NOT_STARTED" },
+    { "name": "SETUP_DEFAULT_DATASOURCES",          "status": "NOT_STARTED" },
+    { "name": "SETUP_DEFAULT_CITATION_STYLES",      "status": "NOT_STARTED" },
+    { "name": "ENABLE_PRM_LICENSES",                "status": "NOT_STARTED" },
+    { "name": "DISABLE_PRM_LICENSES",               "status": "NOT_STARTED" },
+    { "name": "SETUP_FSP_BOOSTERS",                 "status": "NOT_STARTED" }
   ]
 }

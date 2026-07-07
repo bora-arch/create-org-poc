@@ -9,23 +9,22 @@ import org.springframework.stereotype.Component;
 
 @Component
 @RequiredArgsConstructor
-public class UploadLogoStep implements ProvisionStep {
+public class SetupDefaultVocabulariesInCeStep implements ProvisionStep {
 
     private final ExternalOrganizationClient client;
 
     @Override
     public StepName name() {
-        return StepName.UPLOAD_LOGO;
+        return StepName.SETUP_DEFAULT_VOCABULARIES_IN_CE;
     }
 
     @Override
     public int order() {
-        return 30;
+        return 70;
     }
 
     @Override
     public void execute(ProvisionContext context) {
-        String logoUrl = client.uploadLogo(context.getOrganizationId());
-        context.put(ContextKeys.LOGO_URL, logoUrl);
+        client.setupDefaultVocabulariesInCe(context.getOrganizationId());
     }
 }

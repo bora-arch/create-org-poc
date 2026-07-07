@@ -46,7 +46,7 @@ Pre-seeding keeps the read path a trivial `findByJobIdOrderByStepOrder` — no b
 
 ### 3. Per-step `REQUIRES_NEW` transaction, not job-wide
 
-A single job-wide transaction would (a) hold a DB connection across all 8 external calls and (b) roll back the audit trail on failure — the exact opposite of what we need, since the FAILED row is the point. Per-step boundaries let the GET endpoint observe `IN_PROGRESS` in real time. `StepExecutor` and `JobStateWriter` are both annotated `@Transactional(REQUIRES_NEW)`.
+A single job-wide transaction would (a) hold a DB connection across all 12 external calls and (b) roll back the audit trail on failure — the exact opposite of what we need, since the FAILED row is the point. Per-step boundaries let the GET endpoint observe `IN_PROGRESS` in real time. `StepExecutor` and `JobStateWriter` are both annotated `@Transactional(REQUIRES_NEW)`.
 
 For POC simplicity the external call runs inside the step's transaction. Production would bracket the external call with two short transactions (mark-start, then mark-end after the call) with the network I/O outside any transaction — the code shape is identical, only the `@Transactional` boundary moves.
 
@@ -72,7 +72,7 @@ Each `POST /organizations` is handed off to the `provisioningExecutor` pool (cor
 
 ## Failure semantics
 
-- **Step throws** → executor writes `FAILED` (with translated code + message), rethrows `StepExecutionException`.
+- **Step throws** → executor writes `FAILED` (with translated code + message), emits an `ERROR`-level application log carrying the step name, job id, translated code/message, and the full stack trace, then rethrows `StepExecutionException`. The persisted row is the machine-readable record; the log is the operator's forensic trail.
 - **Orchestrator catches** → writes job `FAILED` with `finishedAt` set; leaves the failed step's `currentStep` pointer intact.
 - **Remaining steps** stay `NOT_STARTED` — no follow-up code needed, because they were pre-seeded that way.
 - **Unexpected non-step exception** (e.g., DB blip while marking state) → same terminal treatment, logged at ERROR.

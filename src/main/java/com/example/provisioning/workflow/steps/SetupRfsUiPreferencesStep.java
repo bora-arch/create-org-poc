@@ -9,22 +9,22 @@ import org.springframework.stereotype.Component;
 
 @Component
 @RequiredArgsConstructor
-public class ConfigureUsersStep implements ProvisionStep {
+public class SetupRfsUiPreferencesStep implements ProvisionStep {
 
     private final ExternalOrganizationClient client;
 
     @Override
     public StepName name() {
-        return StepName.CONFIGURE_USERS;
+        return StepName.SETUP_RFS_UI_PREFERENCES;
     }
 
     @Override
     public int order() {
-        return 50;
+        return 60;
     }
 
     @Override
     public void execute(ProvisionContext context) {
-        client.configureUsers(context.getOrganizationId());
+        client.setupRfsUiPreferences(context.getOrganizationId());
     }
 }

@@ -15,22 +15,23 @@ class StepRegistryTest {
     @Test
     void ordersStepsByDeclaredOrder() {
         StepRegistry registry = new StepRegistry(List.of(
-            step(StepName.SETUP_ORG, 20),
-            step(StepName.CREATE_ORG, 10),
-            step(StepName.UPLOAD_LOGO, 30)
+            step(StepName.SETUP_ORG_IN_FSP, 20),
+            step(StepName.CREATE_ORG_IN_FSP, 10),
+            step(StepName.ASSIGN_RECOMMENDATION_MODELS, 30)
         ));
 
         assertThat(registry.ordered())
             .extracting(ProvisionStep::name)
-            .containsExactly(StepName.CREATE_ORG, StepName.SETUP_ORG, StepName.UPLOAD_LOGO);
+            .containsExactly(StepName.CREATE_ORG_IN_FSP, StepName.SETUP_ORG_IN_FSP,
+                StepName.ASSIGN_RECOMMENDATION_MODELS);
         assertThat(registry.total()).isEqualTo(3);
     }
 
     @Test
     void failsFastOnDuplicateOrder() {
         List<ProvisionStep> steps = List.of(
-            step(StepName.CREATE_ORG, 10),
-            step(StepName.SETUP_ORG, 10)
+            step(StepName.CREATE_ORG_IN_FSP, 10),
+            step(StepName.SETUP_ORG_IN_FSP, 10)
         );
 
         assertThatThrownBy(() -> new StepRegistry(steps))

@@ -3,25 +3,34 @@ package com.example.provisioning.external;
 import java.util.UUID;
 
 /**
- * SPI for the downstream organization platform. Real implementations
- * would talk to one or more remote services; the POC ships a mock that
- * fails a random call to exercise the failure path.
+ * SPI for the downstream organization platform (FSP / CE / PRM / RFS
+ * subsystems). Real implementations would talk to one or more remote
+ * services; the POC ships a mock that fails a random call to exercise
+ * the failure path.
  */
 public interface ExternalOrganizationClient {
 
-    UUID createOrganization(String name);
+    UUID createOrgInFsp(String name);
 
-    void setupOrganization(UUID organizationId);
+    void setupOrgInFsp(UUID organizationId);
 
-    String uploadLogo(UUID organizationId);
+    void assignRecommendationModels(UUID organizationId);
 
-    void configureVocabulary(UUID organizationId);
+    void setupDefaultBrandingPreferences(UUID organizationId);
 
-    void configureUsers(UUID organizationId);
+    void setupDefaultPrmPreferences(UUID organizationId);
 
-    void configurePermissions(UUID organizationId);
+    void setupRfsUiPreferences(UUID organizationId);
 
-    void configureBranding(UUID organizationId, String logoUrl);
+    void setupDefaultVocabulariesInCe(UUID organizationId);
 
-    void validate(UUID organizationId);
+    void setupDefaultDatasources(UUID organizationId);
+
+    void setupDefaultCitationStyles(UUID organizationId);
+
+    void enablePrmLicenses(UUID organizationId);
+
+    void disablePrmLicenses(UUID organizationId);
+
+    void setupFspBoosters(UUID organizationId);
 }

@@ -48,9 +48,12 @@ public class StepExecutor {
                 step.name(), jobId, row.getDurationMs());
         } catch (RuntimeException failure) {
             markFailed(row, started, failure);
-            log.warn("Step {} for job {} failed after {} ms: {} {}",
+            // Record the failure in the application log with the full stack
+            // trace, in addition to the persisted errorCode/errorMessage on
+            // the step row. This is the operator's forensic trail.
+            log.error("Step {} for job {} FAILED after {} ms with {} '{}'",
                 step.name(), jobId, row.getDurationMs(),
-                row.getErrorCode(), row.getErrorMessage());
+                row.getErrorCode(), row.getErrorMessage(), failure);
             throw new StepExecutionException(step.name(), failure);
         }
     }

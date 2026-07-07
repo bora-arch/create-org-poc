@@ -58,9 +58,9 @@ class OrganizationControllerIT {
                     .andReturn();
                 JsonNode state = objectMapper.readTree(poll.getResponse().getContentAsString());
                 assertThat(state.get("status").asText()).isEqualTo("SUCCESS");
-                assertThat(state.get("progress").asInt()).isEqualTo(8);
-                assertThat(state.get("totalSteps").asInt()).isEqualTo(8);
-                assertThat(state.get("steps")).hasSize(8);
+                assertThat(state.get("progress").asInt()).isEqualTo(12);
+                assertThat(state.get("totalSteps").asInt()).isEqualTo(12);
+                assertThat(state.get("steps")).hasSize(12);
                 state.get("steps").forEach(s ->
                     assertThat(s.get("status").asText()).isEqualTo(StepStatus.SUCCESS.name()));
             });
@@ -91,16 +91,18 @@ class OrganizationControllerIT {
         @Primary
         ExternalOrganizationClient alwaysSucceedsClient() {
             return new ExternalOrganizationClient() {
-                @Override public UUID createOrganization(String name) { return UUID.randomUUID(); }
-                @Override public void setupOrganization(UUID organizationId) { }
-                @Override public String uploadLogo(UUID organizationId) {
-                    return "https://cdn.test/logo/" + organizationId + ".png";
-                }
-                @Override public void configureVocabulary(UUID organizationId) { }
-                @Override public void configureUsers(UUID organizationId) { }
-                @Override public void configurePermissions(UUID organizationId) { }
-                @Override public void configureBranding(UUID organizationId, String logoUrl) { }
-                @Override public void validate(UUID organizationId) { }
+                @Override public UUID createOrgInFsp(String name) { return UUID.randomUUID(); }
+                @Override public void setupOrgInFsp(UUID organizationId) { }
+                @Override public void assignRecommendationModels(UUID organizationId) { }
+                @Override public void setupDefaultBrandingPreferences(UUID organizationId) { }
+                @Override public void setupDefaultPrmPreferences(UUID organizationId) { }
+                @Override public void setupRfsUiPreferences(UUID organizationId) { }
+                @Override public void setupDefaultVocabulariesInCe(UUID organizationId) { }
+                @Override public void setupDefaultDatasources(UUID organizationId) { }
+                @Override public void setupDefaultCitationStyles(UUID organizationId) { }
+                @Override public void enablePrmLicenses(UUID organizationId) { }
+                @Override public void disablePrmLicenses(UUID organizationId) { }
+                @Override public void setupFspBoosters(UUID organizationId) { }
             };
         }
     }

@@ -32,55 +32,77 @@ public class MockExternalOrganizationClient implements ExternalOrganizationClien
     );
 
     @Override
-    public UUID createOrganization(String name) {
-        maybeFail("createOrganization");
+    public UUID createOrgInFsp(String name) {
+        maybeFail("createOrgInFsp");
         UUID id = UUID.randomUUID();
-        log.debug("createOrganization name={} -> id={}", name, id);
+        log.debug("createOrgInFsp name={} -> id={}", name, id);
         return id;
     }
 
     @Override
-    public void setupOrganization(UUID organizationId) {
-        maybeFail("setupOrganization");
-        log.debug("setupOrganization id={}", organizationId);
+    public void setupOrgInFsp(UUID organizationId) {
+        maybeFail("setupOrgInFsp");
+        log.debug("setupOrgInFsp id={}", organizationId);
     }
 
     @Override
-    public String uploadLogo(UUID organizationId) {
-        maybeFail("uploadLogo");
-        String url = "https://cdn.example.com/logos/" + organizationId + ".png";
-        log.debug("uploadLogo id={} -> url={}", organizationId, url);
-        return url;
+    public void assignRecommendationModels(UUID organizationId) {
+        maybeFail("assignRecommendationModels");
+        log.debug("assignRecommendationModels id={}", organizationId);
     }
 
     @Override
-    public void configureVocabulary(UUID organizationId) {
-        maybeFail("configureVocabulary");
-        log.debug("configureVocabulary id={}", organizationId);
+    public void setupDefaultBrandingPreferences(UUID organizationId) {
+        maybeFail("setupDefaultBrandingPreferences");
+        log.debug("setupDefaultBrandingPreferences id={}", organizationId);
     }
 
     @Override
-    public void configureUsers(UUID organizationId) {
-        maybeFail("configureUsers");
-        log.debug("configureUsers id={}", organizationId);
+    public void setupDefaultPrmPreferences(UUID organizationId) {
+        maybeFail("setupDefaultPrmPreferences");
+        log.debug("setupDefaultPrmPreferences id={}", organizationId);
     }
 
     @Override
-    public void configurePermissions(UUID organizationId) {
-        maybeFail("configurePermissions");
-        log.debug("configurePermissions id={}", organizationId);
+    public void setupRfsUiPreferences(UUID organizationId) {
+        maybeFail("setupRfsUiPreferences");
+        log.debug("setupRfsUiPreferences id={}", organizationId);
     }
 
     @Override
-    public void configureBranding(UUID organizationId, String logoUrl) {
-        maybeFail("configureBranding");
-        log.debug("configureBranding id={} logoUrl={}", organizationId, logoUrl);
+    public void setupDefaultVocabulariesInCe(UUID organizationId) {
+        maybeFail("setupDefaultVocabulariesInCe");
+        log.debug("setupDefaultVocabulariesInCe id={}", organizationId);
     }
 
     @Override
-    public void validate(UUID organizationId) {
-        maybeFail("validate");
-        log.debug("validate id={}", organizationId);
+    public void setupDefaultDatasources(UUID organizationId) {
+        maybeFail("setupDefaultDatasources");
+        log.debug("setupDefaultDatasources id={}", organizationId);
+    }
+
+    @Override
+    public void setupDefaultCitationStyles(UUID organizationId) {
+        maybeFail("setupDefaultCitationStyles");
+        log.debug("setupDefaultCitationStyles id={}", organizationId);
+    }
+
+    @Override
+    public void enablePrmLicenses(UUID organizationId) {
+        maybeFail("enablePrmLicenses");
+        log.debug("enablePrmLicenses id={}", organizationId);
+    }
+
+    @Override
+    public void disablePrmLicenses(UUID organizationId) {
+        maybeFail("disablePrmLicenses");
+        log.debug("disablePrmLicenses id={}", organizationId);
+    }
+
+    @Override
+    public void setupFspBoosters(UUID organizationId) {
+        maybeFail("setupFspBoosters");
+        log.debug("setupFspBoosters id={}", organizationId);
     }
 
     private void maybeFail(String call) {

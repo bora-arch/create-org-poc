@@ -9,22 +9,22 @@ import org.springframework.stereotype.Component;
 
 @Component
 @RequiredArgsConstructor
-public class SetupOrganizationStep implements ProvisionStep {
+public class SetupDefaultPrmPreferencesStep implements ProvisionStep {
 
     private final ExternalOrganizationClient client;
 
     @Override
     public StepName name() {
-        return StepName.SETUP_ORG;
+        return StepName.SETUP_DEFAULT_PRM_PREFERENCES;
     }
 
     @Override
     public int order() {
-        return 20;
+        return 50;
     }
 
     @Override
     public void execute(ProvisionContext context) {
-        client.setupOrganization(context.getOrganizationId());
+        client.setupDefaultPrmPreferences(context.getOrganizationId());
     }
 }

@@ -9,22 +9,22 @@ import org.springframework.stereotype.Component;
 
 @Component
 @RequiredArgsConstructor
-public class ConfigureVocabulariesStep implements ProvisionStep {
+public class SetupDefaultCitationStylesStep implements ProvisionStep {
 
     private final ExternalOrganizationClient client;
 
     @Override
     public StepName name() {
-        return StepName.CONFIGURE_VOCABULARIES;
+        return StepName.SETUP_DEFAULT_CITATION_STYLES;
     }
 
     @Override
     public int order() {
-        return 40;
+        return 90;
     }
 
     @Override
     public void execute(ProvisionContext context) {
-        client.configureVocabulary(context.getOrganizationId());
+        client.setupDefaultCitationStyles(context.getOrganizationId());
     }
 }

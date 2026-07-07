@@ -9,25 +9,22 @@ import org.springframework.stereotype.Component;
 
 @Component
 @RequiredArgsConstructor
-public class ConfigureBrandingStep implements ProvisionStep {
+public class AssignRecommendationModelsStep implements ProvisionStep {
 
     private final ExternalOrganizationClient client;
 
     @Override
     public StepName name() {
-        return StepName.CONFIGURE_BRANDING;
+        return StepName.ASSIGN_RECOMMENDATION_MODELS;
     }
 
     @Override
     public int order() {
-        return 70;
+        return 30;
     }
 
     @Override
     public void execute(ProvisionContext context) {
-        String logoUrl = context.get(ContextKeys.LOGO_URL, String.class)
-            .orElseThrow(() -> new IllegalStateException(
-                "logoUrl missing from context — UPLOAD_LOGO must run before CONFIGURE_BRANDING"));
-        client.configureBranding(context.getOrganizationId(), logoUrl);
+        client.assignRecommendationModels(context.getOrganizationId());
     }
 }
