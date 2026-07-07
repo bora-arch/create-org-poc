@@ -1,6 +1,8 @@
 # create-org-poc
 
-Production-shaped POC of an **Organization Provisioning Workflow** built with Java 21, Spring Boot 3, and the **Orchestrator pattern**. A REST endpoint accepts a create request, immediately returns `202 Accepted`, and drives a sequence of 8 external calls asynchronously while persisting per-step progress to H2. A GET endpoint returns full workflow state — completed steps, the failed step (if any), remaining `NOT_STARTED` steps, and progress — for a UI to render.
+Production-shaped POC of an **Organization Provisioning Workflow** built with Java 21, Spring Boot 3, and the **Orchestrator pattern**. A REST endpoint accepts a create request, immediately returns `202 Accepted`, and drives a sequence of 12 external calls asynchronously while persisting per-step progress to H2. A GET endpoint returns full workflow state — completed steps, the failed step (if any), skipped steps, remaining `NOT_STARTED` steps, and progress — for a UI to render.
+
+Steps that do not apply to a given job (by business rule) are recorded `SKIPPED` and never executed — see [Conditional steps](#conditional-steps-skipped).
 
 ## Run
 
@@ -27,8 +29,10 @@ Covers registry uniqueness, exception translation, and an end-to-end `MockMvc` i
 ```bash
 curl -sS -X POST http://localhost:8080/organizations \
   -H 'content-type: application/json' \
-  -d '{"name":"Acme Corporation","createdBy":"sav20006@gmail.com"}'
+  -d '{"name":"Acme Corporation","createdBy":"sav20006@gmail.com","orgType":"STANDARD"}'
 ```
+
+`orgType` is optional (`STANDARD` \| `INTERNAL` \| `ENTERPRISE`, defaults to `STANDARD`). It selects a profile in `default_config.json` that decides which steps run and which are recorded `SKIPPED`.
 
 Returns `202 Accepted`:
 
@@ -79,12 +83,51 @@ On failure (mock client randomly fails 15% of calls):
 }
 ```
 
-Full sample payloads under `docs/samples/`.
+Full sample payloads under `docs/samples/` (including [`GET-job-with-skip.json`](docs/samples/GET-job-with-skip.json) and [`db-rows.md`](docs/samples/db-rows.md) showing the persisted table rows).
+
+## Conditional steps (SKIPPED)
+
+Not every step applies to every job. A step declares its applicability by
+overriding `boolean shouldRun(ProvisionContext)` on `ProvisionStep`
+(default `true`). Before each step, the orchestrator asks:
+
+- `shouldRun == true` → execute normally (`IN_PROGRESS` → `SUCCESS`/`FAILED`).
+- `shouldRun == false` → `StepExecutor.skip(...)` records the row as
+  `SKIPPED` — no external call is made.
+
+`SKIPPED` is a terminal, success-like state: it counts toward `progress`
+and never fails the job.
+
+**What drives the skip: the org type's config profile.** The request's
+`orgType` selects a profile in
+[`default_config.json`](src/main/resources/default_config.json), which
+lists the enabled config *sections* for that tier. Each conditional step
+checks its section via `context.hasSection(...)` — a missing section
+means the step is skipped:
+
+| Step | Section (`ConfigSections`) | STANDARD | INTERNAL | ENTERPRISE |
+|------|----------------------------|:--------:|:--------:|:----------:|
+| `ASSIGN_FSP_RECOMMENDATION_MODELS`       | `recommendation_models`   | skip | skip | run |
+| `SETUP_DEFAULT_BRANDING_PRM_PREFERENCES` | `branding`                | run  | skip | run |
+| `SETUP_DEFAULT_RFS_UI_PRM_PREFERENCES`   | `rfs_ui_prm_preferences`  | run  | skip | run |
+| `SETUP_DEFAULT_CITATIONS`                | `citations`               | run  | skip | run |
+| `ENABLE_PRM_LICENSES`                    | `license` present         | run  | skip | run |
+| `DISABLE_PRM_LICENSES`                   | `license` **absent**      | skip | run  | skip |
+| `SETUP_FSP_BOOSTERS`                     | `boosters`                | skip | skip | run |
+
+The `license` section shows the mutually exclusive idiom: when it is
+present the step *enables* licenses and the *disable* step is skipped;
+when absent, the reverse. Core steps (`CREATE_ORG_IN_FSP`,
+`SETUP_ORG_IN_FSP`, `SETUP_DEFAULT_PRM_PREFERENCES`,
+`SETUP_DEFAULT_VOCABULARIES_IN_CE`, `SETUP_DEFAULT_DATASOURCES_IN_FSP`)
+always run. Persisted `SKIPPED` rows carry no `started_at` or
+`duration_ms` — see [`docs/samples/db-rows.md`](docs/samples/db-rows.md).
 
 ## Docs
 
 - [`docs/architecture.md`](docs/architecture.md) — architecture decisions and rationale
 - [`docs/diagrams.md`](docs/diagrams.md) — package, class, sequence, and status-transition diagrams (Mermaid)
+- [`docs/samples/db-rows.md`](docs/samples/db-rows.md) — example `organization_provision_job` / `organization_provision_step` rows (with a skipped step)
 - [`docs/future-improvements.md`](docs/future-improvements.md) — retry, Saga, distributed async, event sourcing, Temporal/Camunda
 
 ## Adding a new step
@@ -92,6 +135,7 @@ Full sample payloads under `docs/samples/`.
 1. Create a new `@Component` implementing `com.example.provisioning.workflow.spi.ProvisionStep`.
 2. Return a new `StepName` enum value from `name()`, and a unique `order()` value gapped between existing steps (`10, 20, 30 …`).
 3. Add whatever downstream calls you need using constructor-injected clients.
+4. Optionally override `shouldRun(context)` to make the step conditional — return `false` and it is recorded `SKIPPED` instead of executed.
 
 The orchestrator discovers it automatically. `StepRegistry` fails the app at startup if `order()` collides with an existing step — no other code changes required.
 

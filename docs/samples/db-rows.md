@@ -1,0 +1,69 @@
+# Database rows — sample state
+
+The workflow persists two tables (H2 in the POC): one job row in
+`organization_provision_job` and one row per catalog step in
+`organization_provision_step`. Below is a completed job created with
+`orgType = STANDARD`. That profile
+([`default_config.json`](../../src/main/resources/default_config.json))
+enables `branding`, `rfs_ui_prm_preferences`, `citations`, and
+`license` — so three steps are **skipped**:
+`ASSIGN_FSP_RECOMMENDATION_MODELS` (no `recommendation_models`),
+`DISABLE_PRM_LICENSES` (`license` present → enable runs instead), and
+`SETUP_FSP_BOOSTERS` (no `boosters`).
+
+Job id: `8b1b2f2c-4a11-4e7a-9c6b-7a1c3b2a0e11`
+
+## `organization_provision_job`
+
+| id | organization_id | org_type | status | current_step | started_at | finished_at | created_by |
+|----|-----------------|----------|--------|--------------|------------|-------------|------------|
+| 8b1b2f2c-…-0e11 | 3f2a9c14-…-b7d2 | STANDARD | SUCCESS | ENABLE_PRM_LICENSES | 2026-07-07T10:15:02.100Z | 2026-07-07T10:15:04.480Z | sav20006@gmail.com |
+
+`current_step` holds the last step the orchestrator pointed at.
+`markCurrentStep` is not called for skipped steps, so it lands on
+`ENABLE_PRM_LICENSES` (the last executed step), not on the trailing
+`DISABLE_PRM_LICENSES` / `SETUP_FSP_BOOSTERS` skips.
+
+## `organization_provision_step`
+
+| id | job_id | step_order | step_name | status | started_at | finished_at | duration_ms | error_code | error_message |
+|----|--------|-----------:|-----------|--------|------------|-------------|------------:|-----------|---------------|
+| …-0001 | 8b1b2f2c-…-0e11 |  10 | CREATE_ORG_IN_FSP                      | SUCCESS     | 2026-07-07T10:15:02.110Z | 2026-07-07T10:15:02.290Z | 180 | | |
+| …-0002 | 8b1b2f2c-…-0e11 |  20 | SETUP_ORG_IN_FSP                       | SUCCESS     | 2026-07-07T10:15:02.300Z | 2026-07-07T10:15:02.480Z | 180 | | |
+| …-0003 | 8b1b2f2c-…-0e11 |  30 | ASSIGN_FSP_RECOMMENDATION_MODELS       | **SKIPPED** | *(null)*                 | 2026-07-07T10:15:02.490Z | *(null)* | | |
+| …-0004 | 8b1b2f2c-…-0e11 |  40 | SETUP_DEFAULT_BRANDING_PRM_PREFERENCES | SUCCESS     | 2026-07-07T10:15:02.500Z | 2026-07-07T10:15:02.690Z | 190 | | |
+| …-0005 | 8b1b2f2c-…-0e11 |  50 | SETUP_DEFAULT_PRM_PREFERENCES          | SUCCESS     | 2026-07-07T10:15:02.700Z | 2026-07-07T10:15:02.870Z | 170 | | |
+| …-0006 | 8b1b2f2c-…-0e11 |  60 | SETUP_DEFAULT_RFS_UI_PRM_PREFERENCES   | SUCCESS     | 2026-07-07T10:15:02.880Z | 2026-07-07T10:15:03.050Z | 170 | | |
+| …-0007 | 8b1b2f2c-…-0e11 |  70 | SETUP_DEFAULT_VOCABULARIES_IN_CE       | SUCCESS     | 2026-07-07T10:15:03.060Z | 2026-07-07T10:15:03.260Z | 200 | | |
+| …-0008 | 8b1b2f2c-…-0e11 |  80 | SETUP_DEFAULT_DATASOURCES_IN_FSP       | SUCCESS     | 2026-07-07T10:15:03.270Z | 2026-07-07T10:15:03.470Z | 200 | | |
+| …-0009 | 8b1b2f2c-…-0e11 |  90 | SETUP_DEFAULT_CITATIONS                | SUCCESS     | 2026-07-07T10:15:03.480Z | 2026-07-07T10:15:03.660Z | 180 | | |
+| …-0010 | 8b1b2f2c-…-0e11 | 100 | ENABLE_PRM_LICENSES                    | SUCCESS     | 2026-07-07T10:15:03.670Z | 2026-07-07T10:15:03.850Z | 180 | | |
+| …-0011 | 8b1b2f2c-…-0e11 | 110 | DISABLE_PRM_LICENSES                   | **SKIPPED** | *(null)*                 | 2026-07-07T10:15:03.860Z | *(null)* | | |
+| …-0012 | 8b1b2f2c-…-0e11 | 120 | SETUP_FSP_BOOSTERS                     | **SKIPPED** | *(null)*                 | 2026-07-07T10:15:03.870Z | *(null)* | | |
+
+A `SKIPPED` row has **no `started_at`** and **no `duration_ms`**
+(the step never ran); only `finished_at` is stamped, marking when the
+skip decision was recorded. `error_code` / `error_message` stay null —
+a skip is not a failure.
+
+Other tiers resolve differently: `INTERNAL` skips every optional section
+(only the five core steps plus `DISABLE_PRM_LICENSES` run), while
+`ENTERPRISE` runs everything except `DISABLE_PRM_LICENSES`.
+
+## Query it live (H2 console)
+
+`spring.h2.console.enabled=true` exposes the console at `/h2-console`.
+
+```sql
+SELECT step_order, step_name, status, duration_ms
+FROM   organization_provision_step
+WHERE  job_id = '8b1b2f2c-4a11-4e7a-9c6b-7a1c3b2a0e11'
+ORDER  BY step_order;
+
+-- How did each job resolve its steps?
+SELECT j.org_type, s.status, COUNT(*)
+FROM   organization_provision_step s
+JOIN   organization_provision_job  j ON j.id = s.job_id
+GROUP  BY j.org_type, s.status
+ORDER  BY j.org_type, s.status;
+```

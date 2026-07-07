@@ -55,6 +55,23 @@ public class StepExecutor {
         }
     }
 
+    /**
+     * Records a step as {@link StepStatus#SKIPPED} without invoking it.
+     * Called by the orchestrator when {@link ProvisionStep#shouldRun}
+     * returns false — the step does not apply to this job by business
+     * rule. Runs in its own {@code REQUIRES_NEW} transaction, like
+     * {@link #execute}, so the SKIPPED row is committed and visible to
+     * concurrent GETs immediately.
+     */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void skip(UUID jobId, ProvisionStep step) {
+        OrganizationProvisionStep row = loadStepRow(jobId, step.name());
+        row.setStatus(StepStatus.SKIPPED);
+        row.setFinishedAt(Instant.now());
+        stepRepository.save(row);
+        log.info("Step {} for job {} skipped (not applicable)", step.name(), jobId);
+    }
+
     private OrganizationProvisionStep loadStepRow(UUID jobId, StepName name) {
         return stepRepository.findByJobIdOrderByStepOrder(jobId).stream()
             .filter(s -> s.getStepName() == name)

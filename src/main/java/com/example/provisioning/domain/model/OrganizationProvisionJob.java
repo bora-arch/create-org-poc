@@ -31,6 +31,10 @@ public class OrganizationProvisionJob {
     private UUID organizationId;
 
     @Enumerated(EnumType.STRING)
+    @Column(name = "org_type", length = 32)
+    private OrgType orgType;
+
+    @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 32)
     private WorkflowStatus status;
 
