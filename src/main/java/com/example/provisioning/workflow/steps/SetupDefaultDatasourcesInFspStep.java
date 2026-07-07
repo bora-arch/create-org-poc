@@ -9,22 +9,22 @@ import org.springframework.stereotype.Component;
 
 @Component
 @RequiredArgsConstructor
-public class ConfigureVocabulariesStep implements ProvisionStep {
+public class SetupDefaultDatasourcesInFspStep implements ProvisionStep {
 
     private final ExternalOrganizationClient client;
 
     @Override
     public StepName name() {
-        return StepName.CONFIGURE_VOCABULARIES;
+        return StepName.SETUP_DEFAULT_DATASOURCES_IN_FSP;
     }
 
     @Override
     public int order() {
-        return 40;
+        return 80;
     }
 
     @Override
     public void execute(ProvisionContext context) {
-        client.configureVocabulary(context.getOrganizationId());
+        client.setupDefaultDatasourcesInFsp(context.getOrganizationId());
     }
 }

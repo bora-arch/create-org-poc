@@ -13,9 +13,8 @@ import java.util.UUID;
  * by design: a workflow instance is processed by a single thread.
  *
  * <p>Steps read the request context (jobId, organization name, actor)
- * and read/write typed attributes to hand data downstream — for
- * example, {@code UploadLogoStep} publishes the logo URL that
- * {@code ConfigureBrandingStep} later consumes.
+ * and read/write typed attributes to hand data downstream — an earlier
+ * step publishes a value under a key that a later step consumes.
  */
 @Getter
 @RequiredArgsConstructor

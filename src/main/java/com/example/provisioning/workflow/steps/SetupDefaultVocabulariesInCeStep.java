@@ -9,22 +9,22 @@ import org.springframework.stereotype.Component;
 
 @Component
 @RequiredArgsConstructor
-public class ConfigurePermissionsStep implements ProvisionStep {
+public class SetupDefaultVocabulariesInCeStep implements ProvisionStep {
 
     private final ExternalOrganizationClient client;
 
     @Override
     public StepName name() {
-        return StepName.CONFIGURE_PERMISSIONS;
+        return StepName.SETUP_DEFAULT_VOCABULARIES_IN_CE;
     }
 
     @Override
     public int order() {
-        return 60;
+        return 70;
     }
 
     @Override
     public void execute(ProvisionContext context) {
-        client.configurePermissions(context.getOrganizationId());
+        client.setupDefaultVocabulariesInCe(context.getOrganizationId());
     }
 }

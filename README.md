@@ -48,15 +48,15 @@ While running:
 {
   "jobId": "8b1b2f2c-4a11-4e7a-9c6b-7a1c3b2a0e11",
   "status": "IN_PROGRESS",
-  "currentStep": "CONFIGURE_VOCABULARIES",
+  "currentStep": "SETUP_DEFAULT_BRANDING_PRM_PREFERENCES",
   "progress": 3,
-  "totalSteps": 8,
+  "totalSteps": 12,
   "steps": [
-    { "name": "CREATE_ORG",             "status": "SUCCESS" },
-    { "name": "SETUP_ORG",              "status": "SUCCESS" },
-    { "name": "UPLOAD_LOGO",            "status": "SUCCESS" },
-    { "name": "CONFIGURE_VOCABULARIES", "status": "IN_PROGRESS" },
-    { "name": "CONFIGURE_USERS",        "status": "NOT_STARTED" }
+    { "name": "CREATE_ORG_IN_FSP",                      "status": "SUCCESS" },
+    { "name": "SETUP_ORG_IN_FSP",                       "status": "SUCCESS" },
+    { "name": "ASSIGN_FSP_RECOMMENDATION_MODELS",       "status": "SUCCESS" },
+    { "name": "SETUP_DEFAULT_BRANDING_PRM_PREFERENCES", "status": "IN_PROGRESS" },
+    { "name": "SETUP_DEFAULT_PRM_PREFERENCES",          "status": "NOT_STARTED" }
   ]
 }
 ```
@@ -67,14 +67,14 @@ On failure (mock client randomly fails 15% of calls):
 {
   "jobId": "8b1b2f2c-4a11-4e7a-9c6b-7a1c3b2a0e11",
   "status": "FAILED",
-  "currentStep": "UPLOAD_LOGO",
-  "progress": 3,
-  "totalSteps": 8,
+  "currentStep": "ASSIGN_FSP_RECOMMENDATION_MODELS",
+  "progress": 2,
+  "totalSteps": 12,
   "steps": [
-    { "name": "CREATE_ORG",   "status": "SUCCESS" },
-    { "name": "SETUP_ORG",    "status": "SUCCESS" },
-    { "name": "UPLOAD_LOGO",  "status": "FAILED", "errorCode": "401", "errorMessage": "Unauthorized" },
-    { "name": "CONFIGURE_USERS", "status": "NOT_STARTED" }
+    { "name": "CREATE_ORG_IN_FSP",                "status": "SUCCESS" },
+    { "name": "SETUP_ORG_IN_FSP",                 "status": "SUCCESS" },
+    { "name": "ASSIGN_FSP_RECOMMENDATION_MODELS", "status": "FAILED", "errorCode": "401", "errorMessage": "Unauthorized" },
+    { "name": "SETUP_DEFAULT_BRANDING_PRM_PREFERENCES", "status": "NOT_STARTED" }
   ]
 }
 ```
@@ -106,6 +106,6 @@ com.example.provisioning
 └── workflow
     ├── spi                      ProvisionStep interface + ProvisionContext
     ├── engine                   orchestrator + step executor + registry + failure translator + state writer
-    ├── steps                    8 concrete step beans
+    ├── steps                    12 concrete step beans
     └── query                    read-model service for GET endpoint
 ```

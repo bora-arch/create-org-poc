@@ -9,25 +9,22 @@ import org.springframework.stereotype.Component;
 
 @Component
 @RequiredArgsConstructor
-public class ConfigureBrandingStep implements ProvisionStep {
+public class EnablePrmLicensesStep implements ProvisionStep {
 
     private final ExternalOrganizationClient client;
 
     @Override
     public StepName name() {
-        return StepName.CONFIGURE_BRANDING;
+        return StepName.ENABLE_PRM_LICENSES;
     }
 
     @Override
     public int order() {
-        return 70;
+        return 100;
     }
 
     @Override
     public void execute(ProvisionContext context) {
-        String logoUrl = context.get(ContextKeys.LOGO_URL, String.class)
-            .orElseThrow(() -> new IllegalStateException(
-                "logoUrl missing from context — UPLOAD_LOGO must run before CONFIGURE_BRANDING"));
-        client.configureBranding(context.getOrganizationId(), logoUrl);
+        client.enablePrmLicenses(context.getOrganizationId());
     }
 }
