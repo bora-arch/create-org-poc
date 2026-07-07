@@ -1,5 +1,6 @@
 package com.example.provisioning.api.dto;
 
+import com.example.provisioning.domain.model.OrgType;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
 
@@ -8,16 +9,17 @@ public record CreateOrganizationRequest(
     @Size(max = 128) String createdBy,
 
     /**
-     * Whether PRM licenses should be enabled for the new organization.
-     * Optional — defaults to {@code true} when omitted. Drives the
-     * mutually exclusive {@code ENABLE_PRM_LICENSES} /
-     * {@code DISABLE_PRM_LICENSES} steps: one runs, the other is skipped.
+     * Organization tier. Optional — defaults to {@link OrgType#STANDARD}
+     * when omitted. Selects the {@code default_config.json} profile that
+     * decides which steps run and which are skipped (e.g. the
+     * {@code license} section gates the PRM-license steps, {@code boosters}
+     * gates {@code SETUP_FSP_BOOSTERS}).
      */
-    Boolean prmLicensesEnabled
+    OrgType orgType
 ) {
 
-    /** Resolves the optional flag, defaulting to enabled. */
-    public boolean prmLicensesEnabledOrDefault() {
-        return prmLicensesEnabled == null || prmLicensesEnabled;
+    /** Resolves the optional org type, defaulting to STANDARD. */
+    public OrgType orgTypeOrDefault() {
+        return orgType == null ? OrgType.STANDARD : orgType;
     }
 }

@@ -1,13 +1,13 @@
 {
   "jobId": "8b1b2f2c-4a11-4e7a-9c6b-7a1c3b2a0e11",
   "status": "SUCCESS",
-  "currentStep": "SETUP_FSP_BOOSTERS",
+  "currentStep": "ENABLE_PRM_LICENSES",
   "progress": 12,
   "totalSteps": 12,
   "steps": [
     { "name": "CREATE_ORG_IN_FSP",                      "status": "SUCCESS" },
     { "name": "SETUP_ORG_IN_FSP",                       "status": "SUCCESS" },
-    { "name": "ASSIGN_FSP_RECOMMENDATION_MODELS",       "status": "SUCCESS" },
+    { "name": "ASSIGN_FSP_RECOMMENDATION_MODELS",       "status": "SKIPPED" },
     { "name": "SETUP_DEFAULT_BRANDING_PRM_PREFERENCES", "status": "SUCCESS" },
     { "name": "SETUP_DEFAULT_PRM_PREFERENCES",          "status": "SUCCESS" },
     { "name": "SETUP_DEFAULT_RFS_UI_PRM_PREFERENCES",   "status": "SUCCESS" },
@@ -16,6 +16,6 @@
     { "name": "SETUP_DEFAULT_CITATIONS",                "status": "SUCCESS" },
     { "name": "ENABLE_PRM_LICENSES",                    "status": "SUCCESS" },
     { "name": "DISABLE_PRM_LICENSES",                   "status": "SKIPPED" },
-    { "name": "SETUP_FSP_BOOSTERS",                     "status": "SUCCESS" }
+    { "name": "SETUP_FSP_BOOSTERS",                     "status": "SKIPPED" }
   ]
 }

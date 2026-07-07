@@ -29,10 +29,10 @@ Covers registry uniqueness, exception translation, and an end-to-end `MockMvc` i
 ```bash
 curl -sS -X POST http://localhost:8080/organizations \
   -H 'content-type: application/json' \
-  -d '{"name":"Acme Corporation","createdBy":"sav20006@gmail.com","prmLicensesEnabled":true}'
+  -d '{"name":"Acme Corporation","createdBy":"sav20006@gmail.com","orgType":"STANDARD"}'
 ```
 
-`prmLicensesEnabled` is optional (defaults to `true`). It selects between the mutually exclusive `ENABLE_PRM_LICENSES` / `DISABLE_PRM_LICENSES` steps — one runs, the other is recorded `SKIPPED`.
+`orgType` is optional (`STANDARD` \| `INTERNAL` \| `ENTERPRISE`, defaults to `STANDARD`). It selects a profile in `default_config.json` that decides which steps run and which are recorded `SKIPPED`.
 
 Returns `202 Accepted`:
 
@@ -96,10 +96,32 @@ overriding `boolean shouldRun(ProvisionContext)` on `ProvisionStep`
   `SKIPPED` — no external call is made.
 
 `SKIPPED` is a terminal, success-like state: it counts toward `progress`
-and never fails the job. The shipped example is the mutually exclusive
-`ENABLE_PRM_LICENSES` / `DISABLE_PRM_LICENSES` pair, gated on the
-request's `prmLicensesEnabled` flag. Persisted `SKIPPED` rows carry no
-`started_at` or `duration_ms` — see [`docs/samples/db-rows.md`](docs/samples/db-rows.md).
+and never fails the job.
+
+**What drives the skip: the org type's config profile.** The request's
+`orgType` selects a profile in
+[`default_config.json`](src/main/resources/default_config.json), which
+lists the enabled config *sections* for that tier. Each conditional step
+checks its section via `context.hasSection(...)` — a missing section
+means the step is skipped:
+
+| Step | Section (`ConfigSections`) | STANDARD | INTERNAL | ENTERPRISE |
+|------|----------------------------|:--------:|:--------:|:----------:|
+| `ASSIGN_FSP_RECOMMENDATION_MODELS`       | `recommendation_models`   | skip | skip | run |
+| `SETUP_DEFAULT_BRANDING_PRM_PREFERENCES` | `branding`                | run  | skip | run |
+| `SETUP_DEFAULT_RFS_UI_PRM_PREFERENCES`   | `rfs_ui_prm_preferences`  | run  | skip | run |
+| `SETUP_DEFAULT_CITATIONS`                | `citations`               | run  | skip | run |
+| `ENABLE_PRM_LICENSES`                    | `license` present         | run  | skip | run |
+| `DISABLE_PRM_LICENSES`                   | `license` **absent**      | skip | run  | skip |
+| `SETUP_FSP_BOOSTERS`                     | `boosters`                | skip | skip | run |
+
+The `license` section shows the mutually exclusive idiom: when it is
+present the step *enables* licenses and the *disable* step is skipped;
+when absent, the reverse. Core steps (`CREATE_ORG_IN_FSP`,
+`SETUP_ORG_IN_FSP`, `SETUP_DEFAULT_PRM_PREFERENCES`,
+`SETUP_DEFAULT_VOCABULARIES_IN_CE`, `SETUP_DEFAULT_DATASOURCES_IN_FSP`)
+always run. Persisted `SKIPPED` rows carry no `started_at` or
+`duration_ms` — see [`docs/samples/db-rows.md`](docs/samples/db-rows.md).
 
 ## Docs
 

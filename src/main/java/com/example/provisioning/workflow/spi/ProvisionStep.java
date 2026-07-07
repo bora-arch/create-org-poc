@@ -25,9 +25,13 @@ public interface ProvisionStep {
      * Business gate deciding whether this step applies to the current
      * job. Steps that return {@code false} are recorded as
      * {@link com.example.provisioning.domain.model.StepStatus#SKIPPED}
-     * and their {@link #execute(ProvisionContext)} is never called —
-     * e.g. mutually exclusive steps like enabling vs. disabling PRM
-     * licenses, or features that only apply to certain org tiers.
+     * and their {@link #execute(ProvisionContext)} is never called.
+     *
+     * <p>The common source of truth is the org type's config profile:
+     * a step runs only if its section is enabled, e.g.
+     * {@code context.hasSection(ConfigSections.LICENSE)}. Mutually
+     * exclusive steps invert the check (enable if the license section
+     * is present, disable if it is absent).
      *
      * <p>Defaults to {@code true}: unless a step opts out, it always runs.
      */

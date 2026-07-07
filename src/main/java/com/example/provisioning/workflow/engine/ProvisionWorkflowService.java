@@ -1,5 +1,6 @@
 package com.example.provisioning.workflow.engine;
 
+import com.example.provisioning.domain.model.OrgType;
 import com.example.provisioning.domain.model.OrganizationProvisionJob;
 import com.example.provisioning.domain.model.OrganizationProvisionStep;
 import com.example.provisioning.domain.model.StepStatus;
@@ -14,6 +15,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -36,6 +38,7 @@ public class ProvisionWorkflowService {
     private final StepRegistry stepRegistry;
     private final StepExecutor stepExecutor;
     private final JobStateWriter jobStateWriter;
+    private final DefaultConfigProvider defaultConfigProvider;
 
     /**
      * Persists a new job with all steps pre-seeded as {@link StepStatus#NOT_STARTED}.
@@ -43,29 +46,34 @@ public class ProvisionWorkflowService {
      * off to async execution.
      */
     @Transactional
-    public OrganizationProvisionJob createJob(String organizationName, String createdBy) {
+    public OrganizationProvisionJob createJob(String organizationName, String createdBy,
+                                              OrgType orgType) {
         UUID jobId = UUID.randomUUID();
         OrganizationProvisionJob job = OrganizationProvisionJob.builder()
             .id(jobId)
             .status(WorkflowStatus.PENDING)
+            .orgType(orgType)
             .createdBy(createdBy)
             .build();
         workflowRepository.save(job);
         seedSteps(jobId);
-        log.info("Created provisioning job {} for organization '{}'", jobId, organizationName);
+        log.info("Created provisioning job {} for organization '{}' (orgType={})",
+            jobId, organizationName, orgType);
         return job;
     }
 
     /**
      * Executes the pre-seeded job. Marks the job IN_PROGRESS, walks
-     * the ordered step list, and marks the terminal outcome. Any step
-     * failure halts execution and leaves remaining steps NOT_STARTED
-     * (guaranteed by pre-seeding).
+     * the ordered step list, and marks the terminal outcome. Steps
+     * whose config section is not enabled for the org type are recorded
+     * SKIPPED; any step failure halts execution and leaves remaining
+     * steps NOT_STARTED (guaranteed by pre-seeding).
      */
     public void execute(UUID jobId, String organizationName, String createdBy,
-                        boolean prmLicensesEnabled) {
+                        OrgType orgType) {
+        Set<String> enabledSections = defaultConfigProvider.sectionsFor(orgType);
         ProvisionContext context =
-            new ProvisionContext(jobId, organizationName, createdBy, prmLicensesEnabled);
+            new ProvisionContext(jobId, organizationName, createdBy, orgType, enabledSections);
         jobStateWriter.markStarted(jobId);
 
         List<ProvisionStep> steps = stepRegistry.ordered();
