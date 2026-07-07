@@ -12,9 +12,15 @@ import java.util.UUID;
  * Mutable, per-job carrier passed from step to step. Not thread-safe
  * by design: a workflow instance is processed by a single thread.
  *
- * <p>Steps read the request context (jobId, organization name, actor)
- * and read/write typed attributes to hand data downstream — an earlier
- * step publishes a value under a key that a later step consumes.
+ * <p>Steps read the request context (jobId, organization name, actor,
+ * provisioning options) and read/write typed attributes to hand data
+ * downstream — an earlier step publishes a value under a key that a
+ * later step consumes.
+ *
+ * <p>{@code prmLicensesEnabled} is a provisioning option carried from
+ * the request: steps consult it via {@link ProvisionStep#shouldRun}
+ * to decide whether they apply (enabling vs. disabling PRM licenses
+ * are mutually exclusive — exactly one runs, the other is skipped).
  */
 @Getter
 @RequiredArgsConstructor
@@ -23,6 +29,7 @@ public class ProvisionContext {
     private final UUID jobId;
     private final String organizationName;
     private final String createdBy;
+    private final boolean prmLicensesEnabled;
     private final Map<String, Object> attributes = new HashMap<>();
 
     private UUID organizationId;

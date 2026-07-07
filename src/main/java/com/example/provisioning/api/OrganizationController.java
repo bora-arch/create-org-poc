@@ -28,7 +28,8 @@ public class OrganizationController {
         @Valid @RequestBody CreateOrganizationRequest request
     ) {
         OrganizationProvisionJob job = workflowService.createJob(request.name(), request.createdBy());
-        asyncRunner.run(job.getId(), request.name(), request.createdBy());
+        asyncRunner.run(job.getId(), request.name(), request.createdBy(),
+            request.prmLicensesEnabledOrDefault());
         return ResponseEntity
             .status(HttpStatus.ACCEPTED)
             .body(new CreateOrganizationResponse(job.getId(), WorkflowStatus.IN_PROGRESS));

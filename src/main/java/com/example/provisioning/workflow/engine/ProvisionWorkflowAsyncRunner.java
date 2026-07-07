@@ -25,9 +25,10 @@ public class ProvisionWorkflowAsyncRunner {
     private final ProvisionWorkflowService workflowService;
 
     @Async(AsyncConfig.PROVISIONING_EXECUTOR)
-    public void run(UUID jobId, String organizationName, String createdBy) {
+    public void run(UUID jobId, String organizationName, String createdBy,
+                    boolean prmLicensesEnabled) {
         try {
-            workflowService.execute(jobId, organizationName, createdBy);
+            workflowService.execute(jobId, organizationName, createdBy, prmLicensesEnabled);
         } catch (RuntimeException ex) {
             log.error("Provisioning job {} failed catastrophically", jobId, ex);
         }

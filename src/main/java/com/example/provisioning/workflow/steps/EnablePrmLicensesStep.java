@@ -24,6 +24,11 @@ public class EnablePrmLicensesStep implements ProvisionStep {
     }
 
     @Override
+    public boolean shouldRun(ProvisionContext context) {
+        return context.isPrmLicensesEnabled();
+    }
+
+    @Override
     public void execute(ProvisionContext context) {
         client.enablePrmLicenses(context.getOrganizationId());
     }

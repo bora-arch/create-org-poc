@@ -35,7 +35,7 @@ class OrganizationControllerIT {
     @Autowired ObjectMapper objectMapper;
 
     @Test
-    void postAcceptedThenJobRunsToSuccess() throws Exception {
+    void postAcceptedThenJobRunsToSuccess_disableStepSkippedByDefault() throws Exception {
         MvcResult result = mockMvc.perform(post("/organizations")
                 .contentType(APPLICATION_JSON)
                 .content("""
@@ -49,21 +49,60 @@ class OrganizationControllerIT {
         JsonNode body = objectMapper.readTree(result.getResponse().getContentAsString());
         UUID jobId = UUID.fromString(body.get("jobId").asText());
 
+        // prmLicensesEnabled defaults to true: ENABLE_PRM_LICENSES runs,
+        // DISABLE_PRM_LICENSES is skipped by business rule.
         Awaitility.await()
             .atMost(Duration.ofSeconds(10))
             .pollInterval(Duration.ofMillis(100))
             .untilAsserted(() -> {
-                MvcResult poll = mockMvc.perform(get("/organization-provision-jobs/" + jobId))
-                    .andExpect(status().isOk())
-                    .andReturn();
-                JsonNode state = objectMapper.readTree(poll.getResponse().getContentAsString());
+                JsonNode state = fetchJob(jobId);
                 assertThat(state.get("status").asText()).isEqualTo("SUCCESS");
                 assertThat(state.get("progress").asInt()).isEqualTo(12);
                 assertThat(state.get("totalSteps").asInt()).isEqualTo(12);
                 assertThat(state.get("steps")).hasSize(12);
-                state.get("steps").forEach(s ->
-                    assertThat(s.get("status").asText()).isEqualTo(StepStatus.SUCCESS.name()));
+                state.get("steps").forEach(s -> {
+                    String expected = "DISABLE_PRM_LICENSES".equals(s.get("name").asText())
+                        ? StepStatus.SKIPPED.name()
+                        : StepStatus.SUCCESS.name();
+                    assertThat(s.get("status").asText()).isEqualTo(expected);
+                });
             });
+    }
+
+    @Test
+    void prmLicensesDisabled_skipsEnableStepAndRunsDisableStep() throws Exception {
+        MvcResult result = mockMvc.perform(post("/organizations")
+                .contentType(APPLICATION_JSON)
+                .content("""
+                    {"name":"Acme","createdBy":"sav20006@gmail.com","prmLicensesEnabled":false}
+                    """))
+            .andExpect(status().isAccepted())
+            .andReturn();
+
+        JsonNode body = objectMapper.readTree(result.getResponse().getContentAsString());
+        UUID jobId = UUID.fromString(body.get("jobId").asText());
+
+        Awaitility.await()
+            .atMost(Duration.ofSeconds(10))
+            .pollInterval(Duration.ofMillis(100))
+            .untilAsserted(() -> {
+                JsonNode state = fetchJob(jobId);
+                assertThat(state.get("status").asText()).isEqualTo("SUCCESS");
+                assertThat(state.get("progress").asInt()).isEqualTo(12);
+                state.get("steps").forEach(s -> {
+                    String expected = "ENABLE_PRM_LICENSES".equals(s.get("name").asText())
+                        ? StepStatus.SKIPPED.name()
+                        : StepStatus.SUCCESS.name();
+                    assertThat(s.get("status").asText()).isEqualTo(expected);
+                });
+            });
+    }
+
+    private JsonNode fetchJob(UUID jobId) throws Exception {
+        MvcResult poll = mockMvc.perform(get("/organization-provision-jobs/" + jobId))
+            .andExpect(status().isOk())
+            .andReturn();
+        return objectMapper.readTree(poll.getResponse().getContentAsString());
     }
 
     @Test

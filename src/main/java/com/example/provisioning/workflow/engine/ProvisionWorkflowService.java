@@ -62,14 +62,20 @@ public class ProvisionWorkflowService {
      * failure halts execution and leaves remaining steps NOT_STARTED
      * (guaranteed by pre-seeding).
      */
-    public void execute(UUID jobId, String organizationName, String createdBy) {
-        ProvisionContext context = new ProvisionContext(jobId, organizationName, createdBy);
+    public void execute(UUID jobId, String organizationName, String createdBy,
+                        boolean prmLicensesEnabled) {
+        ProvisionContext context =
+            new ProvisionContext(jobId, organizationName, createdBy, prmLicensesEnabled);
         jobStateWriter.markStarted(jobId);
 
         List<ProvisionStep> steps = stepRegistry.ordered();
         boolean orgIdPropagated = false;
         try {
             for (ProvisionStep step : steps) {
+                if (!step.shouldRun(context)) {
+                    stepExecutor.skip(jobId, step);
+                    continue;
+                }
                 jobStateWriter.markCurrentStep(jobId, step.name());
                 stepExecutor.execute(jobId, step, context);
                 if (!orgIdPropagated && context.getOrganizationId() != null) {

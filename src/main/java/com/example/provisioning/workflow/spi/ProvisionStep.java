@@ -20,4 +20,18 @@ public interface ProvisionStep {
     int order();
 
     void execute(ProvisionContext context);
+
+    /**
+     * Business gate deciding whether this step applies to the current
+     * job. Steps that return {@code false} are recorded as
+     * {@link com.example.provisioning.domain.model.StepStatus#SKIPPED}
+     * and their {@link #execute(ProvisionContext)} is never called —
+     * e.g. mutually exclusive steps like enabling vs. disabling PRM
+     * licenses, or features that only apply to certain org tiers.
+     *
+     * <p>Defaults to {@code true}: unless a step opts out, it always runs.
+     */
+    default boolean shouldRun(ProvisionContext context) {
+        return true;
+    }
 }

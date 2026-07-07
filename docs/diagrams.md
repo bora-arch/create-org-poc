@@ -232,11 +232,46 @@ stateDiagram-v2
 ```mermaid
 stateDiagram-v2
     [*] --> NOT_STARTED : pre-seed
-    NOT_STARTED --> IN_PROGRESS : StepExecutor.execute
+    NOT_STARTED --> IN_PROGRESS : StepExecutor.execute (shouldRun == true)
+    NOT_STARTED --> SKIPPED : StepExecutor.skip (shouldRun == false)
     IN_PROGRESS --> SUCCESS : step returns
     IN_PROGRESS --> FAILED : step throws
-    NOT_STARTED --> SKIPPED : (future — conditional steps)
     SUCCESS --> [*]
     FAILED --> [*]
     SKIPPED --> [*]
+```
+
+A step is pre-seeded `NOT_STARTED`. When the orchestrator reaches it,
+`ProvisionStep.shouldRun(context)` decides the branch: `true` → the
+step executes (`IN_PROGRESS` → `SUCCESS`/`FAILED`); `false` → the step
+is recorded `SKIPPED` and never invoked. `SKIPPED` is a terminal
+success-like state — it counts toward `progress` and does **not** fail
+the job.
+
+## Sequence — conditional skip (SKIPPED)
+
+`ENABLE_PRM_LICENSES` and `DISABLE_PRM_LICENSES` are mutually exclusive:
+the request's `prmLicensesEnabled` flag (default `true`) decides which
+one applies. The other is skipped without any external call.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant WS as ProvisionWorkflowService
+    participant Step as ProvisionStep
+    participant SE as StepExecutor
+    participant DB as H2
+
+    Note over WS: prmLicensesEnabled = true (from request)
+
+    WS->>Step: shouldRun(ctx)  [ENABLE_PRM_LICENSES]
+    Step-->>WS: true
+    WS->>SE: execute(jobId, ENABLE_PRM_LICENSES, ctx)
+    SE->>DB: UPDATE step status=IN_PROGRESS → SUCCESS
+
+    WS->>Step: shouldRun(ctx)  [DISABLE_PRM_LICENSES]
+    Step-->>WS: false
+    WS->>SE: skip(jobId, DISABLE_PRM_LICENSES)
+    SE->>DB: UPDATE step status=SKIPPED, finishedAt
+    Note over WS,DB: execute() never called — no external request made
 ```
