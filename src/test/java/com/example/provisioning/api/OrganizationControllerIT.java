@@ -1,0 +1,108 @@
+package com.example.provisioning.api;
+
+import com.example.provisioning.domain.model.StepStatus;
+import com.example.provisioning.external.ExternalOrganizationClient;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.awaitility.Awaitility;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Import;
+import org.springframework.context.annotation.Primary;
+import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.MvcResult;
+
+import java.time.Duration;
+import java.util.UUID;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.springframework.http.MediaType.APPLICATION_JSON;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+
+@SpringBootTest
+@AutoConfigureMockMvc
+@Import(OrganizationControllerIT.DeterministicClientConfig.class)
+class OrganizationControllerIT {
+
+    @Autowired MockMvc mockMvc;
+    @Autowired ObjectMapper objectMapper;
+
+    @Test
+    void postAcceptedThenJobRunsToSuccess() throws Exception {
+        MvcResult result = mockMvc.perform(post("/organizations")
+                .contentType(APPLICATION_JSON)
+                .content("""
+                    {"name":"Acme","createdBy":"sav20006@gmail.com"}
+                    """))
+            .andExpect(status().isAccepted())
+            .andExpect(jsonPath("$.jobId").exists())
+            .andExpect(jsonPath("$.status").value("IN_PROGRESS"))
+            .andReturn();
+
+        JsonNode body = objectMapper.readTree(result.getResponse().getContentAsString());
+        UUID jobId = UUID.fromString(body.get("jobId").asText());
+
+        Awaitility.await()
+            .atMost(Duration.ofSeconds(10))
+            .pollInterval(Duration.ofMillis(100))
+            .untilAsserted(() -> {
+                MvcResult poll = mockMvc.perform(get("/organization-provision-jobs/" + jobId))
+                    .andExpect(status().isOk())
+                    .andReturn();
+                JsonNode state = objectMapper.readTree(poll.getResponse().getContentAsString());
+                assertThat(state.get("status").asText()).isEqualTo("SUCCESS");
+                assertThat(state.get("progress").asInt()).isEqualTo(8);
+                assertThat(state.get("totalSteps").asInt()).isEqualTo(8);
+                assertThat(state.get("steps")).hasSize(8);
+                state.get("steps").forEach(s ->
+                    assertThat(s.get("status").asText()).isEqualTo(StepStatus.SUCCESS.name()));
+            });
+    }
+
+    @Test
+    void missingJobReturns404() throws Exception {
+        mockMvc.perform(get("/organization-provision-jobs/{jobId}", UUID.randomUUID()))
+            .andExpect(status().isNotFound())
+            .andExpect(jsonPath("$.status").value(404))
+            .andExpect(jsonPath("$.error").value("NOT_FOUND"));
+    }
+
+    @Test
+    void invalidRequestReturns400WithFieldViolations() throws Exception {
+        mockMvc.perform(post("/organizations")
+                .contentType(APPLICATION_JSON)
+                .content("{\"name\":\"\"}"))
+            .andExpect(status().isBadRequest())
+            .andExpect(jsonPath("$.error").value("VALIDATION_FAILED"))
+            .andExpect(jsonPath("$.violations[0].field").value("name"));
+    }
+
+    @TestConfiguration
+    static class DeterministicClientConfig {
+
+        @Bean
+        @Primary
+        ExternalOrganizationClient alwaysSucceedsClient() {
+            return new ExternalOrganizationClient() {
+                @Override public UUID createOrganization(String name) { return UUID.randomUUID(); }
+                @Override public void setupOrganization(UUID organizationId) { }
+                @Override public String uploadLogo(UUID organizationId) {
+                    return "https://cdn.test/logo/" + organizationId + ".png";
+                }
+                @Override public void configureVocabulary(UUID organizationId) { }
+                @Override public void configureUsers(UUID organizationId) { }
+                @Override public void configurePermissions(UUID organizationId) { }
+                @Override public void configureBranding(UUID organizationId, String logoUrl) { }
+                @Override public void validate(UUID organizationId) { }
+            };
+        }
+    }
+
+}

@@ -1,0 +1,17 @@
+{
+  "jobId": "8b1b2f2c-4a11-4e7a-9c6b-7a1c3b2a0e11",
+  "status": "IN_PROGRESS",
+  "currentStep": "CONFIGURE_VOCABULARIES",
+  "progress": 3,
+  "totalSteps": 8,
+  "steps": [
+    { "name": "CREATE_ORG",             "status": "SUCCESS" },
+    { "name": "SETUP_ORG",              "status": "SUCCESS" },
+    { "name": "UPLOAD_LOGO",            "status": "SUCCESS" },
+    { "name": "CONFIGURE_VOCABULARIES", "status": "IN_PROGRESS" },
+    { "name": "CONFIGURE_USERS",        "status": "NOT_STARTED" },
+    { "name": "CONFIGURE_PERMISSIONS",  "status": "NOT_STARTED" },
+    { "name": "CONFIGURE_BRANDING",     "status": "NOT_STARTED" },
+    { "name": "FINAL_VALIDATION",       "status": "NOT_STARTED" }
+  ]
+}
