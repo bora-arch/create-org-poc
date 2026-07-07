@@ -7,27 +7,24 @@ import com.example.provisioning.workflow.spi.ProvisionStep;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
-import java.util.UUID;
-
 @Component
 @RequiredArgsConstructor
-public class CreateOrganizationStep implements ProvisionStep {
+public class SetupDefaultPrmPreferencesStep implements ProvisionStep {
 
     private final ExternalOrganizationClient client;
 
     @Override
     public StepName name() {
-        return StepName.CREATE_ORG;
+        return StepName.SETUP_DEFAULT_PRM_PREFERENCES;
     }
 
     @Override
     public int order() {
-        return 10;
+        return 50;
     }
 
     @Override
     public void execute(ProvisionContext context) {
-        UUID organizationId = client.createOrganization(context.getOrganizationName());
-        context.setOrganizationId(organizationId);
+        client.setupDefaultPrmPreferences(context.getOrganizationId());
     }
 }

@@ -9,22 +9,22 @@ import org.springframework.stereotype.Component;
 
 @Component
 @RequiredArgsConstructor
-public class SetupOrganizationStep implements ProvisionStep {
+public class AssignFspRecommendationModelsStep implements ProvisionStep {
 
     private final ExternalOrganizationClient client;
 
     @Override
     public StepName name() {
-        return StepName.SETUP_ORG;
+        return StepName.ASSIGN_FSP_RECOMMENDATION_MODELS;
     }
 
     @Override
     public int order() {
-        return 20;
+        return 30;
     }
 
     @Override
     public void execute(ProvisionContext context) {
-        client.setupOrganization(context.getOrganizationId());
+        client.assignFspRecommendationModels(context.getOrganizationId());
     }
 }

@@ -9,22 +9,22 @@ import org.springframework.stereotype.Component;
 
 @Component
 @RequiredArgsConstructor
-public class FinalValidationStep implements ProvisionStep {
+public class SetupDefaultRfsUiPrmPreferencesStep implements ProvisionStep {
 
     private final ExternalOrganizationClient client;
 
     @Override
     public StepName name() {
-        return StepName.FINAL_VALIDATION;
+        return StepName.SETUP_DEFAULT_RFS_UI_PRM_PREFERENCES;
     }
 
     @Override
     public int order() {
-        return 80;
+        return 60;
     }
 
     @Override
     public void execute(ProvisionContext context) {
-        client.validate(context.getOrganizationId());
+        client.setupDefaultRfsUiPrmPreferences(context.getOrganizationId());
     }
 }

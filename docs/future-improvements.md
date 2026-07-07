@@ -57,7 +57,7 @@ In both cases the domain layer (entities, DTOs, controllers, mock external clien
 ## 7. Observability
 
 - **Correlation ID** propagated from `POST` into MDC via a filter; the async pool needs `TaskDecorator` to copy MDC across the thread hop.
-- **Metrics.** Micrometer `Timer` per step name (`provisioning.step.duration{name=UPLOAD_LOGO,outcome=SUCCESS}`), counters for outcomes, gauge for queue depth on `provisioningExecutor`.
+- **Metrics.** Micrometer `Timer` per step name (`provisioning.step.duration{name=CREATE_ORG_IN_FSP,outcome=SUCCESS}`), counters for outcomes, gauge for queue depth on `provisioningExecutor`.
 - **Tracing.** OpenTelemetry span per step; span attributes for `jobId`, `stepName`, `attempt`.
 
 ## 8. Security / tenancy

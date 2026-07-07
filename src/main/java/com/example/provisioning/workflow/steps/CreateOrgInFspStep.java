@@ -7,24 +7,27 @@ import com.example.provisioning.workflow.spi.ProvisionStep;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
+import java.util.UUID;
+
 @Component
 @RequiredArgsConstructor
-public class ConfigureUsersStep implements ProvisionStep {
+public class CreateOrgInFspStep implements ProvisionStep {
 
     private final ExternalOrganizationClient client;
 
     @Override
     public StepName name() {
-        return StepName.CONFIGURE_USERS;
+        return StepName.CREATE_ORG_IN_FSP;
     }
 
     @Override
     public int order() {
-        return 50;
+        return 10;
     }
 
     @Override
     public void execute(ProvisionContext context) {
-        client.configureUsers(context.getOrganizationId());
+        UUID organizationId = client.createOrgInFsp(context.getOrganizationName());
+        context.setOrganizationId(organizationId);
     }
 }

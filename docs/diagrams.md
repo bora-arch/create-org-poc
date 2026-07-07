@@ -20,7 +20,7 @@ flowchart TB
             orch["ProvisionWorkflowService<br/>ProvisionWorkflowAsyncRunner<br/>StepExecutor<br/>StepRegistry<br/>StepFailureTranslator<br/>JobStateWriter"]
         end
         subgraph steps["workflow.steps"]
-            step_beans["8 concrete steps"]
+            step_beans["12 concrete steps"]
         end
         subgraph query["workflow.query"]
             qs["ProvisionJobQueryService"]
@@ -130,15 +130,19 @@ classDiagram
     JobStateWriter --> OrganizationProvisionJob
     ProvisionJobQueryService --> OrganizationProvisionJob
     ProvisionJobQueryService --> OrganizationProvisionStep
-    ProvisionStep <|.. CreateOrganizationStep
-    ProvisionStep <|.. SetupOrganizationStep
-    ProvisionStep <|.. UploadLogoStep
-    ProvisionStep <|.. ConfigureVocabulariesStep
-    ProvisionStep <|.. ConfigureUsersStep
-    ProvisionStep <|.. ConfigurePermissionsStep
-    ProvisionStep <|.. ConfigureBrandingStep
-    ProvisionStep <|.. FinalValidationStep
-    CreateOrganizationStep --> ExternalOrganizationClient
+    ProvisionStep <|.. CreateOrgInFspStep
+    ProvisionStep <|.. SetupOrgInFspStep
+    ProvisionStep <|.. AssignFspRecommendationModelsStep
+    ProvisionStep <|.. SetupDefaultBrandingPrmPreferencesStep
+    ProvisionStep <|.. SetupDefaultPrmPreferencesStep
+    ProvisionStep <|.. SetupDefaultRfsUiPrmPreferencesStep
+    ProvisionStep <|.. SetupDefaultVocabulariesInCeStep
+    ProvisionStep <|.. SetupDefaultDatasourcesInFspStep
+    ProvisionStep <|.. SetupDefaultCitationsStep
+    ProvisionStep <|.. EnablePrmLicensesStep
+    ProvisionStep <|.. DisablePrmLicensesStep
+    ProvisionStep <|.. SetupFspBoostersStep
+    CreateOrgInFspStep --> ExternalOrganizationClient
 ```
 
 ## Sequence — successful workflow
@@ -158,7 +162,7 @@ sequenceDiagram
     Client->>OC: POST /organizations {name, createdBy}
     OC->>WS: createJob(name, createdBy)
     WS->>DB: INSERT job (PENDING)
-    WS->>DB: INSERT 8 step rows (NOT_STARTED)
+    WS->>DB: INSERT 12 step rows (NOT_STARTED)
     WS-->>OC: job (id)
     OC->>AR: run(jobId, ...)
     OC-->>Client: 202 { jobId, status: IN_PROGRESS }
@@ -180,7 +184,7 @@ sequenceDiagram
     WS->>DB: UPDATE job status=SUCCESS, finishedAt
 
     Client->>OC: GET /organization-provision-jobs/{jobId}
-    OC-->>Client: 200 { status: SUCCESS, progress: 8, steps: [...] }
+    OC-->>Client: 200 { status: SUCCESS, progress: 12, steps: [...] }
 ```
 
 ## Sequence — failed workflow
@@ -190,23 +194,23 @@ sequenceDiagram
     autonumber
     participant WS as ProvisionWorkflowService
     participant SE as StepExecutor
-    participant Step as UploadLogoStep
+    participant Step as AssignFspRecommendationModelsStep
     participant Ext as ExternalOrganizationClient
     participant FT as StepFailureTranslator
     participant DB as H2
 
-    WS->>SE: execute(jobId, UPLOAD_LOGO, ctx)
-    SE->>DB: UPDATE step UPLOAD_LOGO status=IN_PROGRESS
+    WS->>SE: execute(jobId, ASSIGN_FSP_RECOMMENDATION_MODELS, ctx)
+    SE->>DB: UPDATE step ASSIGN_FSP_RECOMMENDATION_MODELS status=IN_PROGRESS
     SE->>Step: execute(ctx)
-    Step->>Ext: uploadLogo(orgId)
+    Step->>Ext: assignFspRecommendationModels(orgId)
     Ext--x Step: ExternalCallException(401, "Unauthorized")
     Step--x SE: propagates
     SE->>FT: translate(exception)
     FT-->>SE: StepFailure("401", "Unauthorized")
-    SE->>DB: UPDATE step UPLOAD_LOGO status=FAILED, errorCode, errorMessage
-    SE--x WS: StepExecutionException(UPLOAD_LOGO)
+    SE->>DB: UPDATE step ASSIGN_FSP_RECOMMENDATION_MODELS status=FAILED, errorCode, errorMessage
+    SE--x WS: StepExecutionException(ASSIGN_FSP_RECOMMENDATION_MODELS)
     WS->>DB: UPDATE job status=FAILED, finishedAt
-    Note over DB: CONFIGURE_VOCABULARIES..FINAL_VALIDATION remain NOT_STARTED (pre-seeded)
+    Note over DB: SETUP_DEFAULT_BRANDING_PRM_PREFERENCES..SETUP_FSP_BOOSTERS remain NOT_STARTED (pre-seeded)
 ```
 
 ## State transitions

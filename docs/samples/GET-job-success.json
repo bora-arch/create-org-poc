@@ -1,17 +1,21 @@
 {
   "jobId": "8b1b2f2c-4a11-4e7a-9c6b-7a1c3b2a0e11",
   "status": "SUCCESS",
-  "currentStep": "FINAL_VALIDATION",
-  "progress": 8,
-  "totalSteps": 8,
+  "currentStep": "SETUP_FSP_BOOSTERS",
+  "progress": 12,
+  "totalSteps": 12,
   "steps": [
-    { "name": "CREATE_ORG",             "status": "SUCCESS" },
-    { "name": "SETUP_ORG",              "status": "SUCCESS" },
-    { "name": "UPLOAD_LOGO",            "status": "SUCCESS" },
-    { "name": "CONFIGURE_VOCABULARIES", "status": "SUCCESS" },
-    { "name": "CONFIGURE_USERS",        "status": "SUCCESS" },
-    { "name": "CONFIGURE_PERMISSIONS",  "status": "SUCCESS" },
-    { "name": "CONFIGURE_BRANDING",     "status": "SUCCESS" },
-    { "name": "FINAL_VALIDATION",       "status": "SUCCESS" }
+    { "name": "CREATE_ORG_IN_FSP",                      "status": "SUCCESS" },
+    { "name": "SETUP_ORG_IN_FSP",                       "status": "SUCCESS" },
+    { "name": "ASSIGN_FSP_RECOMMENDATION_MODELS",       "status": "SUCCESS" },
+    { "name": "SETUP_DEFAULT_BRANDING_PRM_PREFERENCES", "status": "SUCCESS" },
+    { "name": "SETUP_DEFAULT_PRM_PREFERENCES",          "status": "SUCCESS" },
+    { "name": "SETUP_DEFAULT_RFS_UI_PRM_PREFERENCES",   "status": "SUCCESS" },
+    { "name": "SETUP_DEFAULT_VOCABULARIES_IN_CE",       "status": "SUCCESS" },
+    { "name": "SETUP_DEFAULT_DATASOURCES_IN_FSP",       "status": "SUCCESS" },
+    { "name": "SETUP_DEFAULT_CITATIONS",                "status": "SUCCESS" },
+    { "name": "ENABLE_PRM_LICENSES",                    "status": "SUCCESS" },
+    { "name": "DISABLE_PRM_LICENSES",                   "status": "SUCCESS" },
+    { "name": "SETUP_FSP_BOOSTERS",                     "status": "SUCCESS" }
   ]
 }
