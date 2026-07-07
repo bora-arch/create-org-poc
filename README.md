@@ -125,6 +125,7 @@ always run. Persisted `SKIPPED` rows carry no `started_at` or
 
 ## Docs
 
+- [`docs/openapi.yaml`](docs/openapi.yaml) — OpenAPI 3.0 spec (paste into [editor.swagger.io](https://editor.swagger.io) or serve via Swagger UI)
 - [`docs/architecture.md`](docs/architecture.md) — architecture decisions and rationale
 - [`docs/diagrams.md`](docs/diagrams.md) — package, class, sequence, and status-transition diagrams (Mermaid)
 - [`docs/samples/db-rows.md`](docs/samples/db-rows.md) — example `organization_provision_job` / `organization_provision_step` rows (with a skipped step)
