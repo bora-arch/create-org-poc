@@ -5,12 +5,13 @@ import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
 
+@Schema(description = "Request to provision a new organization")
 public record CreateOrganizationRequest(
-    @Schema(description = "Organization display name (required, non-blank).",
-        example = "Acme Corporation", maxLength = 255)
+    @Schema(description = "Organization display name", example = "Acme Corporation",
+        maxLength = 255, requiredMode = Schema.RequiredMode.REQUIRED)
     @NotBlank @Size(max = 255) String name,
 
-    @Schema(description = "Actor initiating the request.",
+    @Schema(description = "Identifier of the user creating the organization",
         example = "sav20006@gmail.com", maxLength = 128)
     @Size(max = 128) String createdBy,
 
@@ -21,9 +22,9 @@ public record CreateOrganizationRequest(
      * {@code license} section gates the PRM-license steps, {@code boosters}
      * gates {@code SETUP_FSP_BOOSTERS}).
      */
-    @Schema(description = "Organization tier. Optional — defaults to STANDARD. Selects the "
-        + "default_config.json profile that decides which steps run vs. are SKIPPED.",
-        defaultValue = "STANDARD")
+    @Schema(description = "Organization tier; selects the config profile that decides "
+        + "which steps run vs. are SKIPPED. Defaults to STANDARD when omitted.",
+        example = "STANDARD", defaultValue = "STANDARD")
     OrgType orgType
 ) {
 

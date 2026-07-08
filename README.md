@@ -14,6 +14,19 @@ gradle bootRun
 
 Application starts on `http://localhost:8080`. H2 console at `http://localhost:8080/h2-console` (`jdbc:h2:mem:provisioning`, user `sa`, no password).
 
+### API docs (OpenAPI / Swagger)
+
+Interactive API documentation is generated at runtime by
+[springdoc-openapi](https://springdoc.org):
+
+- **Swagger UI:** `http://localhost:8080/swagger-ui.html`
+- **OpenAPI spec (JSON):** `http://localhost:8080/v3/api-docs`
+- **OpenAPI spec (YAML):** `http://localhost:8080/v3/api-docs.yaml`
+
+A snapshot of the generated spec is checked in at
+[`docs/openapi.yaml`](docs/openapi.yaml) — import it into Postman, an API
+gateway, or a client generator without running the app.
+
 ## Test
 
 ```bash
@@ -125,7 +138,7 @@ always run. Persisted `SKIPPED` rows carry no `started_at` or
 
 ## Docs
 
-- [`docs/openapi.yaml`](docs/openapi.yaml) — OpenAPI 3.0 spec (paste into [editor.swagger.io](https://editor.swagger.io) or serve via Swagger UI)
+- [`docs/openapi.yaml`](docs/openapi.yaml) — generated OpenAPI 3 spec (also served live at `/v3/api-docs`)
 - [`docs/architecture.md`](docs/architecture.md) — architecture decisions and rationale
 - [`docs/diagrams.md`](docs/diagrams.md) — package, class, sequence, and status-transition diagrams (Mermaid)
 - [`docs/samples/db-rows.md`](docs/samples/db-rows.md) — example `organization_provision_job` / `organization_provision_step` rows (with a skipped step)

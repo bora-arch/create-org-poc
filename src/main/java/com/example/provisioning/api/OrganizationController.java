@@ -2,9 +2,9 @@ package com.example.provisioning.api;
 
 import com.example.provisioning.api.dto.CreateOrganizationRequest;
 import com.example.provisioning.api.dto.CreateOrganizationResponse;
+import com.example.provisioning.api.error.ApiErrorResponse;
 import com.example.provisioning.domain.model.OrganizationProvisionJob;
 import com.example.provisioning.domain.model.WorkflowStatus;
-import com.example.provisioning.api.error.ApiErrorResponse;
 import com.example.provisioning.workflow.engine.ProvisionWorkflowAsyncRunner;
 import com.example.provisioning.workflow.engine.ProvisionWorkflowService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -25,25 +25,29 @@ import org.springframework.web.bind.annotation.RestController;
 @RestController
 @RequestMapping("/organizations")
 @RequiredArgsConstructor
-@Tag(name = "Organizations", description = "Kick off a provisioning workflow")
+@Tag(name = "Organizations", description = "Kick off organization provisioning workflows")
 public class OrganizationController {
 
     private final ProvisionWorkflowService workflowService;
     private final ProvisionWorkflowAsyncRunner asyncRunner;
 
-    @PostMapping
     @Operation(
-        summary = "Create an organization (start a provisioning workflow)",
-        description = "Persists a new job with all 12 steps pre-seeded as NOT_STARTED, "
-            + "hands execution to an async worker, and returns 202 Accepted with the job id. "
-            + "Poll GET /organization-provision-jobs/{jobId} for progress.")
+        summary = "Create an organization",
+        description = "Registers a provisioning job and immediately returns "
+            + "202 Accepted with its job id. The 12-step provisioning workflow "
+            + "then runs asynchronously; poll GET /organization-provision-jobs/{jobId} "
+            + "for progress.")
     @ApiResponses({
-        @ApiResponse(responseCode = "202", description = "Accepted — job created and running asynchronously"),
-        @ApiResponse(responseCode = "400", description = "Validation failed",
-            content = @Content(schema = @Schema(implementation = ApiErrorResponse.class))),
-        @ApiResponse(responseCode = "500", description = "Unexpected server error",
+        @ApiResponse(
+            responseCode = "202",
+            description = "Provisioning job accepted and started asynchronously",
+            content = @Content(schema = @Schema(implementation = CreateOrganizationResponse.class))),
+        @ApiResponse(
+            responseCode = "400",
+            description = "Request validation failed",
             content = @Content(schema = @Schema(implementation = ApiErrorResponse.class)))
     })
+    @PostMapping
     public ResponseEntity<CreateOrganizationResponse> createOrganization(
         @Valid @RequestBody CreateOrganizationRequest request
     ) {

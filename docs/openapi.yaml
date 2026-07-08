@@ -1,373 +1,262 @@
-openapi: 3.0.3
+openapi: 3.0.1
 info:
   title: Organization Provisioning API
-  description: >-
-    Organization Provisioning Workflow (Orchestrator pattern). A create
-    request returns `202 Accepted` immediately and drives a sequence of
-    12 external provisioning steps asynchronously, persisting per-step
-    progress. A poll endpoint returns full workflow state.
+  description: |-
+    Asynchronous, orchestrator-driven organization provisioning.
 
-
-    Which steps run depends on the organization's `orgType`: it selects a
-    profile in `default_config.json` that enables a set of config
-    sections, and each conditional step runs only if its section is
-    enabled — otherwise the step is recorded `SKIPPED`.
-  version: 1.0.0
+    `POST /organizations` accepts a create request, returns `202 Accepted` with a job id, and drives a sequence of 12 external provisioning steps in the background. `GET /organization-provision-jobs/{jobId}` returns the full workflow state — per-step status (including `SKIPPED` steps that do not apply to the org tier), the current step, and progress — for a UI to poll and render.
   contact:
     name: create-org-poc
-
+    url: https://github.com/bora-arch/create-org-poc
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+  version: 0.0.1
 servers:
-  - url: http://localhost:8080
-    description: Local
-
+- url: http://localhost:8080
+  description: Local development server
 tags:
-  - name: Organizations
-    description: Kick off a provisioning workflow
-  - name: Provision jobs
-    description: Read workflow / step state
-
+- name: Organizations
+  description: Kick off organization provisioning workflows
+- name: Provision Jobs
+  description: Poll the state of an organization provisioning workflow
 paths:
   /organizations:
     post:
-      tags: [Organizations]
-      summary: Create an organization (start a provisioning workflow)
-      description: >-
-        Persists a new job with all 12 steps pre-seeded as
-        `NOT_STARTED`, hands execution to an async worker, and returns
-        `202 Accepted` with the job id. Poll
-        `GET /organization-provision-jobs/{jobId}` for progress.
+      tags:
+      - Organizations
+      summary: Create an organization
+      description: "Registers a provisioning job and immediately returns 202 Accepted\
+        \ with its job id. The 12-step provisioning workflow then runs asynchronously;\
+        \ poll GET /organization-provision-jobs/{jobId} for progress."
       operationId: createOrganization
       requestBody:
-        required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/CreateOrganizationRequest'
-            examples:
-              standard:
-                summary: Default org type (STANDARD)
-                value:
-                  name: Acme Corporation
-                  createdBy: sav20006@gmail.com
-              enterprise:
-                summary: Enterprise tier (runs every optional step)
-                value:
-                  name: Globex
-                  createdBy: sav20006@gmail.com
-                  orgType: ENTERPRISE
+              $ref: "#/components/schemas/CreateOrganizationRequest"
+        required: true
       responses:
-        '202':
-          description: Accepted — job created and running asynchronously.
+        "400":
+          description: Request validation failed
           content:
-            application/json:
+            '*/*':
               schema:
-                $ref: '#/components/schemas/CreateOrganizationResponse'
-              example:
-                jobId: 8b1b2f2c-4a11-4e7a-9c6b-7a1c3b2a0e11
-                status: IN_PROGRESS
-        '400':
-          description: Validation failed.
+                $ref: "#/components/schemas/ApiErrorResponse"
+        "202":
+          description: Provisioning job accepted and started asynchronously
           content:
-            application/json:
+            '*/*':
               schema:
-                $ref: '#/components/schemas/ApiErrorResponse'
-              example:
-                status: 400
-                error: VALIDATION_FAILED
-                message: Request validation failed
-                timestamp: 2026-07-07T10:15:02.100Z
-                violations:
-                  - field: name
-                    message: must not be blank
-        '500':
-          $ref: '#/components/responses/InternalError'
-
+                $ref: "#/components/schemas/CreateOrganizationResponse"
   /organization-provision-jobs/{jobId}:
     get:
-      tags: [Provision jobs]
+      tags:
+      - Provision Jobs
       summary: Get provisioning job state
-      description: >-
-        Returns the full workflow snapshot: overall status, the current
-        step pointer, numeric progress, total step count, and every step
-        with its status (and error info for a failed step).
-      operationId: getProvisionJob
+      description: "Returns the full workflow state for a job — overall status, the\
+        \ current step, progress, total steps, and the per-step list (including SKIPPED\
+        \ steps that do not apply to the org tier)."
+      operationId: getJob
       parameters:
-        - name: jobId
-          in: path
-          required: true
-          description: Job id returned by `POST /organizations`.
-          schema:
-            type: string
-            format: uuid
+      - name: jobId
+        in: path
+        description: Provisioning job id returned by POST /organizations
+        required: true
+        schema:
+          type: string
+          format: uuid
       responses:
-        '200':
-          description: Current workflow state.
+        "404":
+          description: No provisioning job exists for the given id
           content:
-            application/json:
+            '*/*':
               schema:
-                $ref: '#/components/schemas/ProvisionJobResponse'
-              examples:
-                inProgress:
-                  summary: Running
-                  value:
-                    jobId: 8b1b2f2c-4a11-4e7a-9c6b-7a1c3b2a0e11
-                    status: IN_PROGRESS
-                    currentStep: SETUP_DEFAULT_BRANDING_PRM_PREFERENCES
-                    progress: 3
-                    totalSteps: 12
-                    steps:
-                      - name: CREATE_ORG_IN_FSP
-                        status: SUCCESS
-                      - name: SETUP_ORG_IN_FSP
-                        status: SUCCESS
-                      - name: ASSIGN_FSP_RECOMMENDATION_MODELS
-                        status: SUCCESS
-                      - name: SETUP_DEFAULT_BRANDING_PRM_PREFERENCES
-                        status: IN_PROGRESS
-                successWithSkips:
-                  summary: STANDARD success (3 steps skipped)
-                  value:
-                    jobId: 8b1b2f2c-4a11-4e7a-9c6b-7a1c3b2a0e11
-                    status: SUCCESS
-                    currentStep: ENABLE_PRM_LICENSES
-                    progress: 12
-                    totalSteps: 12
-                    steps:
-                      - name: CREATE_ORG_IN_FSP
-                        status: SUCCESS
-                      - name: SETUP_ORG_IN_FSP
-                        status: SUCCESS
-                      - name: ASSIGN_FSP_RECOMMENDATION_MODELS
-                        status: SKIPPED
-                      - name: SETUP_DEFAULT_BRANDING_PRM_PREFERENCES
-                        status: SUCCESS
-                      - name: SETUP_DEFAULT_PRM_PREFERENCES
-                        status: SUCCESS
-                      - name: SETUP_DEFAULT_RFS_UI_PRM_PREFERENCES
-                        status: SUCCESS
-                      - name: SETUP_DEFAULT_VOCABULARIES_IN_CE
-                        status: SUCCESS
-                      - name: SETUP_DEFAULT_DATASOURCES_IN_FSP
-                        status: SUCCESS
-                      - name: SETUP_DEFAULT_CITATIONS
-                        status: SUCCESS
-                      - name: ENABLE_PRM_LICENSES
-                        status: SUCCESS
-                      - name: DISABLE_PRM_LICENSES
-                        status: SKIPPED
-                      - name: SETUP_FSP_BOOSTERS
-                        status: SKIPPED
-                failed:
-                  summary: Failed at a step
-                  value:
-                    jobId: 8b1b2f2c-4a11-4e7a-9c6b-7a1c3b2a0e11
-                    status: FAILED
-                    currentStep: SETUP_ORG_IN_FSP
-                    progress: 1
-                    totalSteps: 12
-                    steps:
-                      - name: CREATE_ORG_IN_FSP
-                        status: SUCCESS
-                      - name: SETUP_ORG_IN_FSP
-                        status: FAILED
-                        errorCode: '401'
-                        errorMessage: Unauthorized
-        '404':
-          description: No job with the given id.
+                $ref: "#/components/schemas/ApiErrorResponse"
+        "200":
+          description: Current workflow state
           content:
-            application/json:
+            '*/*':
               schema:
-                $ref: '#/components/schemas/ApiErrorResponse'
-              example:
-                status: 404
-                error: NOT_FOUND
-                message: 'Job not found: 8b1b2f2c-4a11-4e7a-9c6b-7a1c3b2a0e11'
-                timestamp: 2026-07-07T10:15:02.100Z
-        '500':
-          $ref: '#/components/responses/InternalError'
-
+                $ref: "#/components/schemas/ProvisionJobResponse"
 components:
-  responses:
-    InternalError:
-      description: Unexpected server error.
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/ApiErrorResponse'
-          example:
-            status: 500
-            error: INTERNAL_ERROR
-            message: Unexpected error
-            timestamp: 2026-07-07T10:15:02.100Z
-
   schemas:
     CreateOrganizationRequest:
+      required:
+      - name
       type: object
-      required: [name]
       properties:
         name:
-          type: string
-          minLength: 1
           maxLength: 255
-          description: Organization display name (required, non-blank).
+          minLength: 0
+          type: string
+          description: Organization display name
           example: Acme Corporation
         createdBy:
-          type: string
           maxLength: 128
-          nullable: true
-          description: Actor initiating the request.
+          minLength: 0
+          type: string
+          description: Identifier of the user creating the organization
           example: sav20006@gmail.com
         orgType:
-          allOf:
-            - $ref: '#/components/schemas/OrgType'
-          nullable: true
-          description: >-
-            Organization tier. Optional — defaults to `STANDARD` when
-            omitted. Selects the `default_config.json` profile that
-            decides which steps run vs. are `SKIPPED`.
-
-    CreateOrganizationResponse:
-      type: object
-      required: [jobId, status]
-      properties:
-        jobId:
           type: string
-          format: uuid
-          example: 8b1b2f2c-4a11-4e7a-9c6b-7a1c3b2a0e11
-        status:
-          allOf:
-            - $ref: '#/components/schemas/WorkflowStatus'
-          description: Always `IN_PROGRESS` on acceptance.
-          example: IN_PROGRESS
-
-    ProvisionJobResponse:
-      type: object
-      required: [jobId, status, progress, totalSteps, steps]
-      properties:
-        jobId:
-          type: string
-          format: uuid
-          example: 8b1b2f2c-4a11-4e7a-9c6b-7a1c3b2a0e11
-        status:
-          $ref: '#/components/schemas/WorkflowStatus'
-        currentStep:
-          allOf:
-            - $ref: '#/components/schemas/StepName'
-          nullable: true
-          description: >-
-            Step the orchestrator is on (or last executed). Null before
-            the job starts. Never points at a skipped step.
-        progress:
-          type: integer
-          description: >-
-            Count of steps that have advanced past `NOT_STARTED` /
-            `IN_PROGRESS` — i.e. `SUCCESS`, `FAILED`, or `SKIPPED`.
-          example: 12
-        totalSteps:
-          type: integer
-          description: Total steps in the catalog (currently 12).
-          example: 12
-        steps:
-          type: array
-          items:
-            $ref: '#/components/schemas/ProvisionStepResponse'
-
-    ProvisionStepResponse:
-      type: object
-      required: [name, status]
-      properties:
-        name:
-          $ref: '#/components/schemas/StepName'
-        status:
-          $ref: '#/components/schemas/StepStatus'
-        errorCode:
-          type: string
-          nullable: true
-          description: Present only for a `FAILED` step (omitted otherwise).
-          example: '401'
-        errorMessage:
-          type: string
-          nullable: true
-          description: Present only for a `FAILED` step (omitted otherwise).
-          example: Unauthorized
-
+          description: Organization tier; selects the config profile that decides
+            which steps run vs. are SKIPPED. Defaults to STANDARD when omitted.
+          example: STANDARD
+          default: STANDARD
+          enum:
+          - STANDARD
+          - INTERNAL
+          - ENTERPRISE
+      description: Request to provision a new organization
     ApiErrorResponse:
       type: object
-      required: [status, error, timestamp]
       properties:
         status:
           type: integer
-          description: HTTP status code.
+          description: HTTP status code
+          format: int32
           example: 400
         error:
           type: string
-          description: Machine-readable error code.
-          enum: [VALIDATION_FAILED, NOT_FOUND, INTERNAL_ERROR]
+          description: "Short, machine-readable error code"
           example: VALIDATION_FAILED
         message:
           type: string
-          nullable: true
+          description: Human-readable error message
           example: Request validation failed
         timestamp:
           type: string
+          description: When the error was generated
           format: date-time
-          example: 2026-07-07T10:15:02.100Z
+          example: 2026-07-08T12:34:56Z
         violations:
           type: array
-          nullable: true
-          description: Field-level violations (present on `VALIDATION_FAILED`).
+          description: Field-level validation violations; present only for validation
+            errors
           items:
-            $ref: '#/components/schemas/FieldViolation'
-
+            $ref: "#/components/schemas/FieldViolation"
+      description: Standard error payload returned for 4xx/5xx responses
     FieldViolation:
       type: object
-      required: [field, message]
       properties:
         field:
           type: string
+          description: Offending request field
           example: name
         message:
           type: string
+          description: Why the field is invalid
           example: must not be blank
-
-    OrgType:
-      type: string
-      description: Organization tier selecting the default-config profile.
-      enum:
-        - STANDARD
-        - INTERNAL
-        - ENTERPRISE
-
-    WorkflowStatus:
-      type: string
-      enum:
-        - PENDING
-        - IN_PROGRESS
-        - SUCCESS
-        - FAILED
-
-    StepStatus:
-      type: string
-      enum:
-        - NOT_STARTED
-        - IN_PROGRESS
-        - SUCCESS
-        - FAILED
-        - SKIPPED
-
-    StepName:
-      type: string
-      description: The 12 provisioning steps, in execution order.
-      enum:
-        - CREATE_ORG_IN_FSP
-        - SETUP_ORG_IN_FSP
-        - ASSIGN_FSP_RECOMMENDATION_MODELS
-        - SETUP_DEFAULT_BRANDING_PRM_PREFERENCES
-        - SETUP_DEFAULT_PRM_PREFERENCES
-        - SETUP_DEFAULT_RFS_UI_PRM_PREFERENCES
-        - SETUP_DEFAULT_VOCABULARIES_IN_CE
-        - SETUP_DEFAULT_DATASOURCES_IN_FSP
-        - SETUP_DEFAULT_CITATIONS
-        - ENABLE_PRM_LICENSES
-        - DISABLE_PRM_LICENSES
-        - SETUP_FSP_BOOSTERS
+      description: A single field validation violation
+    CreateOrganizationResponse:
+      type: object
+      properties:
+        jobId:
+          type: string
+          description: Id of the created provisioning job; poll it for progress
+          format: uuid
+          example: 8b1b2f2c-4a11-4e7a-9c6b-7a1c3b2a0e11
+        status:
+          type: string
+          description: Workflow status at acceptance time
+          example: IN_PROGRESS
+          enum:
+          - PENDING
+          - IN_PROGRESS
+          - SUCCESS
+          - FAILED
+      description: Acknowledgement returned when a provisioning job is accepted
+    ProvisionJobResponse:
+      type: object
+      properties:
+        jobId:
+          type: string
+          description: Provisioning job id
+          format: uuid
+          example: 8b1b2f2c-4a11-4e7a-9c6b-7a1c3b2a0e11
+        status:
+          type: string
+          description: Overall workflow status
+          example: IN_PROGRESS
+          enum:
+          - PENDING
+          - IN_PROGRESS
+          - SUCCESS
+          - FAILED
+        currentStep:
+          type: string
+          description: Step currently executing; null once the job reaches a terminal
+            state
+          example: SETUP_DEFAULT_BRANDING_PRM_PREFERENCES
+          enum:
+          - CREATE_ORG_IN_FSP
+          - SETUP_ORG_IN_FSP
+          - ASSIGN_FSP_RECOMMENDATION_MODELS
+          - SETUP_DEFAULT_BRANDING_PRM_PREFERENCES
+          - SETUP_DEFAULT_PRM_PREFERENCES
+          - SETUP_DEFAULT_RFS_UI_PRM_PREFERENCES
+          - SETUP_DEFAULT_VOCABULARIES_IN_CE
+          - SETUP_DEFAULT_DATASOURCES_IN_FSP
+          - SETUP_DEFAULT_CITATIONS
+          - ENABLE_PRM_LICENSES
+          - DISABLE_PRM_LICENSES
+          - SETUP_FSP_BOOSTERS
+        progress:
+          type: integer
+          description: Number of steps that have reached a terminal state (SUCCESS
+            or SKIPPED)
+          format: int32
+          example: 3
+        totalSteps:
+          type: integer
+          description: Total number of steps in the workflow
+          format: int32
+          example: 12
+        steps:
+          type: array
+          description: "Per-step status, in execution order"
+          items:
+            $ref: "#/components/schemas/ProvisionStepResponse"
+      description: Full provisioning workflow state for a job
+    ProvisionStepResponse:
+      type: object
+      properties:
+        name:
+          type: string
+          description: Step identifier
+          example: CREATE_ORG_IN_FSP
+          enum:
+          - CREATE_ORG_IN_FSP
+          - SETUP_ORG_IN_FSP
+          - ASSIGN_FSP_RECOMMENDATION_MODELS
+          - SETUP_DEFAULT_BRANDING_PRM_PREFERENCES
+          - SETUP_DEFAULT_PRM_PREFERENCES
+          - SETUP_DEFAULT_RFS_UI_PRM_PREFERENCES
+          - SETUP_DEFAULT_VOCABULARIES_IN_CE
+          - SETUP_DEFAULT_DATASOURCES_IN_FSP
+          - SETUP_DEFAULT_CITATIONS
+          - ENABLE_PRM_LICENSES
+          - DISABLE_PRM_LICENSES
+          - SETUP_FSP_BOOSTERS
+        status:
+          type: string
+          description: Step status
+          example: SUCCESS
+          enum:
+          - NOT_STARTED
+          - IN_PROGRESS
+          - SUCCESS
+          - FAILED
+          - SKIPPED
+        errorCode:
+          type: string
+          description: Error code from the failed downstream call; present only when
+            status is FAILED
+          example: "401"
+        errorMessage:
+          type: string
+          description: Error message from the failed downstream call; present only
+            when status is FAILED
+          example: Unauthorized
+      description: Status of a single provisioning step

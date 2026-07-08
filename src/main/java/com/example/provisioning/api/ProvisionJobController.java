@@ -21,26 +21,29 @@ import java.util.UUID;
 @RestController
 @RequestMapping("/organization-provision-jobs")
 @RequiredArgsConstructor
-@Tag(name = "Provision jobs", description = "Read workflow / step state")
+@Tag(name = "Provision Jobs", description = "Poll the state of an organization provisioning workflow")
 public class ProvisionJobController {
 
     private final ProvisionJobQueryService queryService;
 
-    @GetMapping("/{jobId}")
     @Operation(
         summary = "Get provisioning job state",
-        description = "Returns the full workflow snapshot: overall status, the current step "
-            + "pointer, numeric progress, total step count, and every step with its status "
-            + "(and error info for a failed step).")
+        description = "Returns the full workflow state for a job — overall status, "
+            + "the current step, progress, total steps, and the per-step list "
+            + "(including SKIPPED steps that do not apply to the org tier).")
     @ApiResponses({
-        @ApiResponse(responseCode = "200", description = "Current workflow state"),
-        @ApiResponse(responseCode = "404", description = "No job with the given id",
-            content = @Content(schema = @Schema(implementation = ApiErrorResponse.class))),
-        @ApiResponse(responseCode = "500", description = "Unexpected server error",
+        @ApiResponse(
+            responseCode = "200",
+            description = "Current workflow state",
+            content = @Content(schema = @Schema(implementation = ProvisionJobResponse.class))),
+        @ApiResponse(
+            responseCode = "404",
+            description = "No provisioning job exists for the given id",
             content = @Content(schema = @Schema(implementation = ApiErrorResponse.class)))
     })
+    @GetMapping("/{jobId}")
     public ProvisionJobResponse getJob(
-        @Parameter(description = "Job id returned by POST /organizations")
+        @Parameter(description = "Provisioning job id returned by POST /organizations", required = true)
         @PathVariable UUID jobId
     ) {
         return queryService.fetch(jobId);

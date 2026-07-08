@@ -24,16 +24,17 @@ spring:
   jackson:
     default-property-inclusion: non_null
 
-server:
-  port: 8080
-
 springdoc:
   api-docs:
     path: /v3/api-docs
   swagger-ui:
     path: /swagger-ui.html
-    operations-sorter: method
+    operationsSorter: method
+    tagsSorter: alpha
     display-request-duration: true
+
+server:
+  port: 8080
 
 logging:
   level:
