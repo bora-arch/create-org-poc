@@ -4,6 +4,7 @@
   "currentStep": "SETUP_DEFAULT_BRANDING_PRM_PREFERENCES",
   "progress": 3,
   "totalSteps": 12,
+  "failedSteps": 0,
   "steps": [
     { "name": "CREATE_ORG_IN_FSP",                      "status": "SUCCESS" },
     { "name": "SETUP_ORG_IN_FSP",                       "status": "SUCCESS" },

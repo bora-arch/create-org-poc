@@ -50,6 +50,27 @@ Other tiers resolve differently: `INTERNAL` skips every optional section
 (only the five core steps plus `DISABLE_PRM_LICENSES` run), while
 `ENTERPRISE` runs everything except `DISABLE_PRM_LICENSES`.
 
+## Failed steps & continue-on-failure — no schema change
+
+A step whose external call fails is stored as a `FAILED` row carrying
+`started_at`, `finished_at`, `duration_ms`, and the translated
+`error_code` / `error_message` — the same columns, just populated:
+
+| step_order | step_name | status | started_at | finished_at | duration_ms | error_code | error_message |
+|-----------:|-----------|--------|------------|-------------|------------:|-----------|---------------|
+| 20 | SETUP_ORG_IN_FSP | **FAILED** | 2026-07-08T…:02.300Z | 2026-07-08T…:02.410Z | 110 | 404 | Not Found |
+
+Because `SETUP_ORG_IN_FSP` is **not** critical, the orchestrator records
+that row and keeps going; the later steps still run, and the **job row's
+`status`** ends `COMPLETED_WITH_ERRORS`. Had a *critical* step
+(`CREATE_ORG_IN_FSP`) failed, the job `status` would be `FAILED` and the
+trailing steps would stay `NOT_STARTED`.
+
+Either way the tables are unchanged: `COMPLETED_WITH_ERRORS` is a new
+value in the existing `status` column (`VARCHAR(32)` holding the enum
+name), and `FAILED` step rows were always part of the schema. No new
+tables or columns.
+
 ## Query it live (H2 console)
 
 `spring.h2.console.enabled=true` exposes the console at `/h2-console`.

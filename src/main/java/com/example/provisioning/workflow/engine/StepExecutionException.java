@@ -5,8 +5,10 @@ import lombok.Getter;
 
 /**
  * Raised by {@link StepExecutor} when a step's persistence has already
- * been marked FAILED. Halts the orchestrator without duplicating the
- * error-capture logic.
+ * been marked FAILED. Signals the failure to the orchestrator without
+ * duplicating the error-capture logic; the orchestrator then decides —
+ * based on {@link com.example.provisioning.workflow.spi.ProvisionStep#critical()} —
+ * whether to halt the chain or continue with the remaining steps.
  */
 @Getter
 public class StepExecutionException extends RuntimeException {

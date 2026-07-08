@@ -44,11 +44,16 @@ The GET contract requires returning `NOT_STARTED` remaining steps after a failur
 
 Pre-seeding keeps the read path a trivial `findByJobIdOrderByStepOrder` — no business logic in the query handler. It also freezes each job's step list at the catalog snapshot in force when it started, giving automatic historical auditability if steps are added to the catalog later.
 
-### 3. Per-step `REQUIRES_NEW` transaction, not job-wide
+### 3. Per-step `REQUIRES_NEW` writes bracketing the external call
 
-A single job-wide transaction would (a) hold a DB connection across all 12 external calls and (b) roll back the audit trail on failure — the exact opposite of what we need, since the FAILED row is the point. Per-step boundaries let the GET endpoint observe `IN_PROGRESS` in real time. `StepExecutor` and `JobStateWriter` are both annotated `@Transactional(REQUIRES_NEW)`.
+A single job-wide transaction would (a) hold a DB connection across all 12 external calls and (b) roll back the audit trail on failure — the exact opposite of what we need, since the FAILED row is the point. So each status write is its own short `REQUIRES_NEW` transaction.
 
-For POC simplicity the external call runs inside the step's transaction. Production would bracket the external call with two short transactions (mark-start, then mark-end after the call) with the network I/O outside any transaction — the code shape is identical, only the `@Transactional` boundary moves.
+The writes **bracket** the external call rather than wrapping it: `StepExecutor` (not itself transactional) calls `StepStateWriter.markInProgress` (commits) → invokes the step's external call outside any transaction → then `markSuccess` / `markFailed` (commits). Two properties depend on this split:
+
+- A concurrent GET observes `IN_PROGRESS` in real time, because that write commits *before* the slow call instead of being held open across it.
+- **A `FAILED` row survives.** `StepExecutor` signals failure to the orchestrator by throwing `StepExecutionException` *after* `markFailed` has committed. If the write and the throw shared one transaction (as an earlier single-`@Transactional`-method design did), the throw would roll back the very audit row it was trying to record — and continue-on-failure, which reads persisted `FAILED` rows, could not work.
+
+`JobStateWriter` (job row) and `StepStateWriter` (step row) are separate beans so Spring's transactional proxy actually engages — a self-invoked method on the orchestrator or executor would bypass it.
 
 ### 4. Async via a named `ThreadPoolTaskExecutor`, wrapped in a separate bean
 
@@ -72,10 +77,15 @@ Each `POST /organizations` is handed off to the `provisioningExecutor` pool (cor
 
 ## Failure semantics
 
-- **Step throws** → executor writes `FAILED` (with translated code + message), rethrows `StepExecutionException`.
-- **Orchestrator catches** → writes job `FAILED` with `finishedAt` set; leaves the failed step's `currentStep` pointer intact.
-- **Remaining steps** stay `NOT_STARTED` — no follow-up code needed, because they were pre-seeded that way.
-- **Unexpected non-step exception** (e.g., DB blip while marking state) → same terminal treatment, logged at ERROR.
+Steps run as a chain; failure handling is per-step, driven by `ProvisionStep.critical()` (default `false`).
+
+- **Step throws** → executor writes `FAILED` (with translated code + message) in its own committed transaction, then rethrows `StepExecutionException`.
+- **Orchestrator catches, non-critical step** → increments a failure counter and **continues** with the remaining steps. The `FAILED` row stays; nothing is rolled back.
+- **Orchestrator catches, critical step** → writes job `FAILED` with `finishedAt`, leaves the `currentStep` pointer on the failed step, and stops. Remaining steps stay `NOT_STARTED` (pre-seeded that way — no follow-up code).
+- **End of chain** → job status is `SUCCESS` if the failure counter is zero, else `COMPLETED_WITH_ERRORS`.
+- **Unexpected non-step exception** (e.g., DB blip while marking state) → job `FAILED`, logged at ERROR.
+
+Only `CREATE_ORG_IN_FSP` is currently `critical`: it produces the `organizationId` every later step consumes, so its failure leaves nothing to provision. Every other step is best-effort — a failure degrades the result (`COMPLETED_WITH_ERRORS`) without blocking the rest.
 
 ## Enterprise concerns intentionally out of scope for the POC
 

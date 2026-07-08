@@ -21,12 +21,17 @@ public record ProvisionJobResponse(
         example = "SETUP_DEFAULT_BRANDING_PRM_PREFERENCES")
     StepName currentStep,
 
-    @Schema(description = "Number of steps that have reached a terminal state (SUCCESS or SKIPPED)",
-        example = "3")
+    @Schema(description = "Number of steps that have reached a terminal state "
+        + "(SUCCESS, SKIPPED, or FAILED)", example = "12")
     int progress,
 
     @Schema(description = "Total number of steps in the workflow", example = "12")
     int totalSteps,
+
+    @Schema(description = "How many steps ended in FAILED. Zero for a clean run; "
+        + "non-zero pairs with status COMPLETED_WITH_ERRORS (chain finished despite "
+        + "failures) or FAILED (a critical step halted the chain).", example = "1")
+    int failedSteps,
 
     @Schema(description = "Per-step status, in execution order")
     List<ProvisionStepResponse> steps

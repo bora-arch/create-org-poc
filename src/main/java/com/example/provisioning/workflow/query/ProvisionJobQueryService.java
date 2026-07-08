@@ -41,6 +41,7 @@ public class ProvisionJobQueryService {
 
         StepName currentStep = resolveCurrentStep(job, stepRows);
         int progress = countAdvancedSteps(stepRows);
+        int failedSteps = countFailedSteps(stepRows);
 
         return new ProvisionJobResponse(
             job.getId(),
@@ -48,6 +49,7 @@ public class ProvisionJobQueryService {
             currentStep,
             progress,
             stepRows.size(),
+            failedSteps,
             stepDtos
         );
     }
@@ -83,6 +85,12 @@ public class ProvisionJobQueryService {
         return (int) steps.stream()
             .filter(s -> s.getStatus() != StepStatus.NOT_STARTED)
             .filter(s -> s.getStatus() != StepStatus.IN_PROGRESS)
+            .count();
+    }
+
+    private int countFailedSteps(List<OrganizationProvisionStep> steps) {
+        return (int) steps.stream()
+            .filter(s -> s.getStatus() == StepStatus.FAILED)
             .count();
     }
 }

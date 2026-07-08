@@ -63,11 +63,22 @@ public class ProvisionWorkflowService {
     }
 
     /**
-     * Executes the pre-seeded job. Marks the job IN_PROGRESS, walks
-     * the ordered step list, and marks the terminal outcome. Steps
+     * Executes the pre-seeded job. Marks the job IN_PROGRESS, walks the
+     * ordered step list as a chain, and marks the terminal outcome. Steps
      * whose config section is not enabled for the org type are recorded
-     * SKIPPED; any step failure halts execution and leaves remaining
-     * steps NOT_STARTED (guaranteed by pre-seeding).
+     * SKIPPED.
+     *
+     * <p>Failure handling is per-step, not all-or-nothing:
+     * <ul>
+     *   <li>A non-{@link ProvisionStep#critical() critical} step that
+     *       fails is recorded FAILED and execution <em>continues</em>
+     *       with the remaining steps. If any such failure occurred, the
+     *       job ends {@link WorkflowStatus#COMPLETED_WITH_ERRORS}.</li>
+     *   <li>A critical step that fails halts the chain: the job is
+     *       {@link WorkflowStatus#FAILED} and the remaining steps stay
+     *       NOT_STARTED (guaranteed by pre-seeding).</li>
+     *   <li>No failures → {@link WorkflowStatus#SUCCESS}.</li>
+     * </ul>
      */
     public void execute(UUID jobId, String organizationName, String createdBy,
                         OrgType orgType) {
@@ -78,6 +89,8 @@ public class ProvisionWorkflowService {
 
         List<ProvisionStep> steps = stepRegistry.ordered();
         boolean orgIdPropagated = false;
+        int failedSteps = 0;
+
         try {
             for (ProvisionStep step : steps) {
                 if (!step.shouldRun(context)) {
@@ -85,17 +98,30 @@ public class ProvisionWorkflowService {
                     continue;
                 }
                 jobStateWriter.markCurrentStep(jobId, step.name());
-                stepExecutor.execute(jobId, step, context);
+                try {
+                    stepExecutor.execute(jobId, step, context);
+                } catch (StepExecutionException failure) {
+                    if (step.critical()) {
+                        jobStateWriter.markFinished(jobId, WorkflowStatus.FAILED);
+                        log.warn("Job {} halted: critical step {} failed", jobId, step.name());
+                        return;
+                    }
+                    failedSteps++;
+                    log.warn("Job {} continuing past non-critical failure of step {} ({} so far)",
+                        jobId, step.name(), failedSteps);
+                    continue;
+                }
                 if (!orgIdPropagated && context.getOrganizationId() != null) {
                     jobStateWriter.markOrganizationId(jobId, context.getOrganizationId());
                     orgIdPropagated = true;
                 }
             }
-            jobStateWriter.markFinished(jobId, WorkflowStatus.SUCCESS);
-            log.info("Job {} succeeded ({} steps)", jobId, steps.size());
-        } catch (StepExecutionException halt) {
-            jobStateWriter.markFinished(jobId, WorkflowStatus.FAILED);
-            log.warn("Job {} failed at step {}", jobId, halt.getStepName());
+            WorkflowStatus outcome = failedSteps == 0
+                ? WorkflowStatus.SUCCESS
+                : WorkflowStatus.COMPLETED_WITH_ERRORS;
+            jobStateWriter.markFinished(jobId, outcome);
+            log.info("Job {} finished {} ({} steps, {} failed)",
+                jobId, outcome, steps.size(), failedSteps);
         } catch (RuntimeException unexpected) {
             jobStateWriter.markFinished(jobId, WorkflowStatus.FAILED);
             log.error("Job {} aborted by unexpected exception", jobId, unexpected);

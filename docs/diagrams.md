@@ -17,7 +17,7 @@ flowchart TB
             step_iface["ProvisionStep<br/>ProvisionContext<br/>ConfigSections"]
         end
         subgraph engine["workflow.engine"]
-            orch["ProvisionWorkflowService<br/>ProvisionWorkflowAsyncRunner<br/>StepExecutor<br/>StepRegistry<br/>StepFailureTranslator<br/>JobStateWriter<br/>DefaultConfigProvider"]
+            orch["ProvisionWorkflowService<br/>ProvisionWorkflowAsyncRunner<br/>StepExecutor<br/>StepStateWriter<br/>StepRegistry<br/>StepFailureTranslator<br/>JobStateWriter<br/>DefaultConfigProvider"]
         end
         subgraph steps["workflow.steps"]
             step_beans["12 concrete steps"]
@@ -61,6 +61,7 @@ classDiagram
         +order() int
         +execute(ctx) void
         +shouldRun(ctx) boolean
+        +critical() boolean
     }
 
     class ProvisionContext {
@@ -96,6 +97,14 @@ classDiagram
 
     class StepExecutor {
         +execute(jobId, step, ctx) void
+        +skip(jobId, step) void
+    }
+
+    class StepStateWriter {
+        +markInProgress(jobId, name, started) void
+        +markSuccess(jobId, name, started) long
+        +markFailed(jobId, name, started, cause) StepFailure
+        +markSkipped(jobId, name) void
     }
 
     class StepFailureTranslator {
@@ -134,8 +143,9 @@ classDiagram
     ProvisionWorkflowService --> JobStateWriter
     ProvisionWorkflowService --> DefaultConfigProvider
     StepRegistry o--> "*" ProvisionStep
-    StepExecutor --> StepFailureTranslator
-    StepExecutor --> OrganizationProvisionStep
+    StepExecutor --> StepStateWriter
+    StepStateWriter --> StepFailureTranslator
+    StepStateWriter --> OrganizationProvisionStep
     JobStateWriter --> OrganizationProvisionJob
     ProvisionJobQueryService --> OrganizationProvisionJob
     ProvisionJobQueryService --> OrganizationProvisionStep
@@ -201,30 +211,56 @@ sequenceDiagram
     OC-->>Client: 200 { status: SUCCESS, progress: 12, steps: [...] }
 ```
 
-## Sequence — failed workflow
+## Sequence — non-critical failure (chain continues)
+
+A non-critical step fails; the orchestrator records it and moves on to the
+next step. The job ends `COMPLETED_WITH_ERRORS`.
 
 ```mermaid
 sequenceDiagram
     autonumber
     participant WS as ProvisionWorkflowService
     participant SE as StepExecutor
-    participant Step as AssignFspRecommendationModelsStep
+    participant SSW as StepStateWriter
+    participant Step as SetupOrgInFspStep
     participant Ext as ExternalOrganizationClient
-    participant FT as StepFailureTranslator
     participant DB as H2
 
-    WS->>SE: execute(jobId, ASSIGN_FSP_RECOMMENDATION_MODELS, ctx)
-    SE->>DB: UPDATE step ASSIGN_FSP_RECOMMENDATION_MODELS status=IN_PROGRESS
+    WS->>SE: execute(jobId, SETUP_ORG_IN_FSP, ctx)
+    SE->>SSW: markInProgress(...)
+    SSW->>DB: UPDATE step status=IN_PROGRESS (commit)
     SE->>Step: execute(ctx)
-    Step->>Ext: assignFspRecommendationModels(orgId)
-    Ext--x Step: ExternalCallException(401, "Unauthorized")
+    Step->>Ext: setupOrgInFsp(orgId)
+    Ext--x Step: ExternalCallException(404, "Not Found")
     Step--x SE: propagates
-    SE->>FT: translate(exception)
-    FT-->>SE: StepFailure("401", "Unauthorized")
-    SE->>DB: UPDATE step ASSIGN_FSP_RECOMMENDATION_MODELS status=FAILED, errorCode, errorMessage
-    SE--x WS: StepExecutionException(ASSIGN_FSP_RECOMMENDATION_MODELS)
+    SE->>SSW: markFailed(..., cause)
+    SSW->>DB: UPDATE step status=FAILED, errorCode, errorMessage (commit)
+    SE--x WS: StepExecutionException(SETUP_ORG_IN_FSP)
+    Note over WS: step.critical() == false → count failure, do NOT halt
+    WS->>SE: execute(jobId, ASSIGN_FSP_RECOMMENDATION_MODELS, ctx)
+    Note over WS,DB: … remaining steps run normally …
+    WS->>DB: UPDATE job status=COMPLETED_WITH_ERRORS, finishedAt
+```
+
+## Sequence — critical failure (chain halts)
+
+`CREATE_ORG_IN_FSP` is `critical`; its failure aborts the chain.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant WS as ProvisionWorkflowService
+    participant SE as StepExecutor
+    participant SSW as StepStateWriter
+    participant DB as H2
+
+    WS->>SE: execute(jobId, CREATE_ORG_IN_FSP, ctx)
+    SE->>SSW: markInProgress(...)
+    SSW->>DB: UPDATE step status=IN_PROGRESS (commit)
+    SE--x WS: StepExecutionException(CREATE_ORG_IN_FSP) [after markFailed commits]
+    Note over WS: step.critical() == true → halt
     WS->>DB: UPDATE job status=FAILED, finishedAt
-    Note over DB: SETUP_DEFAULT_BRANDING_PRM_PREFERENCES..SETUP_FSP_BOOSTERS remain NOT_STARTED (pre-seeded)
+    Note over DB: SETUP_ORG_IN_FSP..SETUP_FSP_BOOSTERS remain NOT_STARTED (pre-seeded)
 ```
 
 ## State transitions
@@ -235,9 +271,11 @@ sequenceDiagram
 stateDiagram-v2
     [*] --> PENDING : createJob
     PENDING --> IN_PROGRESS : execute begins
-    IN_PROGRESS --> SUCCESS : every step SUCCESS
-    IN_PROGRESS --> FAILED : any step FAILED
+    IN_PROGRESS --> SUCCESS : no step failed
+    IN_PROGRESS --> COMPLETED_WITH_ERRORS : chain finished, ≥1 non-critical step FAILED
+    IN_PROGRESS --> FAILED : a critical step FAILED (chain halted)
     SUCCESS --> [*]
+    COMPLETED_WITH_ERRORS --> [*]
     FAILED --> [*]
 ```
 

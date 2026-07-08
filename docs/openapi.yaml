@@ -37,18 +37,18 @@ paths:
               $ref: "#/components/schemas/CreateOrganizationRequest"
         required: true
       responses:
-        "400":
-          description: Request validation failed
-          content:
-            '*/*':
-              schema:
-                $ref: "#/components/schemas/ApiErrorResponse"
         "202":
           description: Provisioning job accepted and started asynchronously
           content:
             '*/*':
               schema:
                 $ref: "#/components/schemas/CreateOrganizationResponse"
+        "400":
+          description: Request validation failed
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/ApiErrorResponse"
   /organization-provision-jobs/{jobId}:
     get:
       tags:
@@ -109,6 +109,25 @@ components:
           - INTERNAL
           - ENTERPRISE
       description: Request to provision a new organization
+    CreateOrganizationResponse:
+      type: object
+      properties:
+        jobId:
+          type: string
+          description: Id of the created provisioning job; poll it for progress
+          format: uuid
+          example: 8b1b2f2c-4a11-4e7a-9c6b-7a1c3b2a0e11
+        status:
+          type: string
+          description: Workflow status at acceptance time
+          example: IN_PROGRESS
+          enum:
+          - PENDING
+          - IN_PROGRESS
+          - SUCCESS
+          - COMPLETED_WITH_ERRORS
+          - FAILED
+      description: Acknowledgement returned when a provisioning job is accepted
     ApiErrorResponse:
       type: object
       properties:
@@ -149,24 +168,6 @@ components:
           description: Why the field is invalid
           example: must not be blank
       description: A single field validation violation
-    CreateOrganizationResponse:
-      type: object
-      properties:
-        jobId:
-          type: string
-          description: Id of the created provisioning job; poll it for progress
-          format: uuid
-          example: 8b1b2f2c-4a11-4e7a-9c6b-7a1c3b2a0e11
-        status:
-          type: string
-          description: Workflow status at acceptance time
-          example: IN_PROGRESS
-          enum:
-          - PENDING
-          - IN_PROGRESS
-          - SUCCESS
-          - FAILED
-      description: Acknowledgement returned when a provisioning job is accepted
     ProvisionJobResponse:
       type: object
       properties:
@@ -183,6 +184,7 @@ components:
           - PENDING
           - IN_PROGRESS
           - SUCCESS
+          - COMPLETED_WITH_ERRORS
           - FAILED
         currentStep:
           type: string
@@ -204,15 +206,22 @@ components:
           - SETUP_FSP_BOOSTERS
         progress:
           type: integer
-          description: Number of steps that have reached a terminal state (SUCCESS
-            or SKIPPED)
+          description: "Number of steps that have reached a terminal state (SUCCESS,\
+            \ SKIPPED, or FAILED)"
           format: int32
-          example: 3
+          example: 12
         totalSteps:
           type: integer
           description: Total number of steps in the workflow
           format: int32
           example: 12
+        failedSteps:
+          type: integer
+          description: How many steps ended in FAILED. Zero for a clean run; non-zero
+            pairs with status COMPLETED_WITH_ERRORS (chain finished despite failures)
+            or FAILED (a critical step halted the chain).
+          format: int32
+          example: 1
         steps:
           type: array
           description: "Per-step status, in execution order"

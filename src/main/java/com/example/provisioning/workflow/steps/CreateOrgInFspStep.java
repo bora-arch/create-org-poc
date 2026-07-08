@@ -25,6 +25,16 @@ public class CreateOrgInFspStep implements ProvisionStep {
         return 10;
     }
 
+    /**
+     * Critical: produces the {@code organizationId} every later step
+     * consumes. If it fails there is nothing to provision, so the chain
+     * halts rather than cascading null-org failures.
+     */
+    @Override
+    public boolean critical() {
+        return true;
+    }
+
     @Override
     public void execute(ProvisionContext context) {
         UUID organizationId = client.createOrgInFsp(context.getOrganizationName());

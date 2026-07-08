@@ -1,16 +1,10 @@
 package com.example.provisioning.workflow.engine;
 
-import com.example.provisioning.domain.model.OrganizationProvisionStep;
-import com.example.provisioning.domain.model.StepName;
-import com.example.provisioning.domain.model.StepStatus;
-import com.example.provisioning.domain.repository.StepRepository;
 import com.example.provisioning.workflow.spi.ProvisionContext;
 import com.example.provisioning.workflow.spi.ProvisionStep;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
-import org.springframework.transaction.annotation.Propagation;
-import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
 import java.util.UUID;
@@ -20,89 +14,47 @@ import java.util.UUID;
  * mark SUCCESS or FAILED, always recording timing and (on failure)
  * translated error info.
  *
- * <p>Each invocation runs in its own {@code REQUIRES_NEW} transaction
- * so a failure persists the FAILED row (the whole point of the audit
- * trail) and so the GET endpoint can observe IN_PROGRESS state in real
- * time. In production, a long-running external call would be split
- * into two short transactions bracketing the call — the same shape,
- * just with the {@code @Transactional} boundary moved.
+ * <p>Deliberately <em>not</em> transactional itself. Each status write is
+ * delegated to {@link StepStateWriter}, which commits it in its own
+ * {@code REQUIRES_NEW} transaction bracketing the external call. That
+ * split is what lets a GET observe {@code IN_PROGRESS} in real time and,
+ * crucially, lets the {@code FAILED} row survive the
+ * {@link StepExecutionException} this method throws to signal failure —
+ * if the write and the throw shared one transaction, the signal would
+ * roll back the audit row.
  */
 @Component
 @RequiredArgsConstructor
 @Slf4j
 public class StepExecutor {
 
-    private final StepRepository stepRepository;
-    private final StepFailureTranslator failureTranslator;
+    private final StepStateWriter stepStateWriter;
 
-    @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void execute(UUID jobId, ProvisionStep step, ProvisionContext context) {
-        OrganizationProvisionStep row = loadStepRow(jobId, step.name());
         Instant started = Instant.now();
-        markInProgress(row, started);
+        stepStateWriter.markInProgress(jobId, step.name(), started);
 
         try {
             step.execute(context);
-            markSuccess(row, started);
-            log.info("Step {} for job {} completed in {} ms",
-                step.name(), jobId, row.getDurationMs());
         } catch (RuntimeException failure) {
-            markFailed(row, started, failure);
-            log.warn("Step {} for job {} failed after {} ms: {} {}",
-                step.name(), jobId, row.getDurationMs(),
-                row.getErrorCode(), row.getErrorMessage());
+            StepFailure translated = stepStateWriter.markFailed(jobId, step.name(), started, failure);
+            log.warn("Step {} for job {} failed: {} {}",
+                step.name(), jobId, translated.errorCode(), translated.errorMessage());
             throw new StepExecutionException(step.name(), failure);
         }
+
+        long durationMs = stepStateWriter.markSuccess(jobId, step.name(), started);
+        log.info("Step {} for job {} completed in {} ms", step.name(), jobId, durationMs);
     }
 
     /**
-     * Records a step as {@link StepStatus#SKIPPED} without invoking it.
-     * Called by the orchestrator when {@link ProvisionStep#shouldRun}
-     * returns false — the step does not apply to this job by business
-     * rule. Runs in its own {@code REQUIRES_NEW} transaction, like
-     * {@link #execute}, so the SKIPPED row is committed and visible to
-     * concurrent GETs immediately.
+     * Records a step as {@link com.example.provisioning.domain.model.StepStatus#SKIPPED}
+     * without invoking it. Called by the orchestrator when
+     * {@link ProvisionStep#shouldRun} returns false — the step does not
+     * apply to this job by business rule.
      */
-    @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void skip(UUID jobId, ProvisionStep step) {
-        OrganizationProvisionStep row = loadStepRow(jobId, step.name());
-        row.setStatus(StepStatus.SKIPPED);
-        row.setFinishedAt(Instant.now());
-        stepRepository.save(row);
+        stepStateWriter.markSkipped(jobId, step.name());
         log.info("Step {} for job {} skipped (not applicable)", step.name(), jobId);
-    }
-
-    private OrganizationProvisionStep loadStepRow(UUID jobId, StepName name) {
-        return stepRepository.findByJobIdOrderByStepOrder(jobId).stream()
-            .filter(s -> s.getStepName() == name)
-            .findFirst()
-            .orElseThrow(() -> new IllegalStateException(
-                "No step row for job " + jobId + " and step " + name
-                    + "; job was not pre-seeded correctly."));
-    }
-
-    private void markInProgress(OrganizationProvisionStep row, Instant started) {
-        row.setStatus(StepStatus.IN_PROGRESS);
-        row.setStartedAt(started);
-        stepRepository.save(row);
-    }
-
-    private void markSuccess(OrganizationProvisionStep row, Instant started) {
-        Instant finished = Instant.now();
-        row.setStatus(StepStatus.SUCCESS);
-        row.setFinishedAt(finished);
-        row.setDurationMs(finished.toEpochMilli() - started.toEpochMilli());
-        stepRepository.save(row);
-    }
-
-    private void markFailed(OrganizationProvisionStep row, Instant started, Throwable cause) {
-        Instant finished = Instant.now();
-        StepFailure failure = failureTranslator.translate(cause);
-        row.setStatus(StepStatus.FAILED);
-        row.setFinishedAt(finished);
-        row.setDurationMs(finished.toEpochMilli() - started.toEpochMilli());
-        row.setErrorCode(failure.errorCode());
-        row.setErrorMessage(failure.errorMessage());
-        stepRepository.save(row);
     }
 }

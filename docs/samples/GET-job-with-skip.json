@@ -4,6 +4,7 @@
   "currentStep": "ENABLE_PRM_LICENSES",
   "progress": 12,
   "totalSteps": 12,
+  "failedSteps": 0,
   "steps": [
     { "name": "CREATE_ORG_IN_FSP",                      "status": "SUCCESS" },
     { "name": "SETUP_ORG_IN_FSP",                       "status": "SUCCESS" },

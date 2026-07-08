@@ -38,4 +38,29 @@ public interface ProvisionStep {
     default boolean shouldRun(ProvisionContext context) {
         return true;
     }
+
+    /**
+     * Whether a failure of this step must halt the whole workflow.
+     *
+     * <p>Steps run as a chain: by default a step that fails is recorded
+     * {@link com.example.provisioning.domain.model.StepStatus#FAILED} and
+     * the orchestrator <em>continues</em> with the remaining steps, ending
+     * the job {@link com.example.provisioning.domain.model.WorkflowStatus#COMPLETED_WITH_ERRORS}
+     * rather than aborting. This suits best-effort setup steps whose
+     * failure degrades but does not invalidate the provision.
+     *
+     * <p>A step returns {@code true} only when later steps genuinely
+     * cannot proceed without it — a hard prerequisite. The canonical
+     * example is {@code CREATE_ORG_IN_FSP}, which produces the
+     * {@code organizationId} that every downstream call consumes: if it
+     * fails there is nothing to configure, so the chain halts and the job
+     * is {@link com.example.provisioning.domain.model.WorkflowStatus#FAILED},
+     * leaving the remaining steps {@code NOT_STARTED}.
+     *
+     * <p>Defaults to {@code false}: unless a step declares itself critical,
+     * its failure is non-blocking.
+     */
+    default boolean critical() {
+        return false;
+    }
 }

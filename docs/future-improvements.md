@@ -74,5 +74,5 @@ In both cases the domain layer (entities, DTOs, controllers, mock external clien
 ## 10. Testing
 
 - Contract tests for the JSON shape (Spring REST Docs or an OpenAPI-conformance suite).
-- A property-based test that generates arbitrary sequences of `SUCCESS`/`FAILED` per step and asserts the invariant "on FAILED, the failed step is the last non-`NOT_STARTED` step, and the job is `FAILED`."
+- A property-based test that generates arbitrary sequences of `SUCCESS`/`FAILED` per step and asserts the invariants: a *critical* step failing halts the chain (the failed step is the last non-`NOT_STARTED` step, job `FAILED`); any *non-critical* failures let the chain run to the end (no `NOT_STARTED` remain, job `COMPLETED_WITH_ERRORS` iff ≥1 step failed, else `SUCCESS`).
 - Load tests hitting the async pool to size `corePoolSize`, `queueCapacity`, and DB pool.
