@@ -1,0 +1,262 @@
+openapi: 3.0.1
+info:
+  title: Organization Provisioning API
+  description: |-
+    Asynchronous, orchestrator-driven organization provisioning.
+
+    `POST /organizations` accepts a create request, returns `202 Accepted` with a job id, and drives a sequence of 12 external provisioning steps in the background. `GET /organization-provision-jobs/{jobId}` returns the full workflow state — per-step status (including `SKIPPED` steps that do not apply to the org tier), the current step, and progress — for a UI to poll and render.
+  contact:
+    name: create-org-poc
+    url: https://github.com/bora-arch/create-org-poc
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+  version: 0.0.1
+servers:
+- url: http://localhost:8080
+  description: Local development server
+tags:
+- name: Organizations
+  description: Kick off organization provisioning workflows
+- name: Provision Jobs
+  description: Poll the state of an organization provisioning workflow
+paths:
+  /organizations:
+    post:
+      tags:
+      - Organizations
+      summary: Create an organization
+      description: "Registers a provisioning job and immediately returns 202 Accepted\
+        \ with its job id. The 12-step provisioning workflow then runs asynchronously;\
+        \ poll GET /organization-provision-jobs/{jobId} for progress."
+      operationId: createOrganization
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateOrganizationRequest"
+        required: true
+      responses:
+        "400":
+          description: Request validation failed
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/ApiErrorResponse"
+        "202":
+          description: Provisioning job accepted and started asynchronously
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/CreateOrganizationResponse"
+  /organization-provision-jobs/{jobId}:
+    get:
+      tags:
+      - Provision Jobs
+      summary: Get provisioning job state
+      description: "Returns the full workflow state for a job — overall status, the\
+        \ current step, progress, total steps, and the per-step list (including SKIPPED\
+        \ steps that do not apply to the org tier)."
+      operationId: getJob
+      parameters:
+      - name: jobId
+        in: path
+        description: Provisioning job id returned by POST /organizations
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "404":
+          description: No provisioning job exists for the given id
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/ApiErrorResponse"
+        "200":
+          description: Current workflow state
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/ProvisionJobResponse"
+components:
+  schemas:
+    CreateOrganizationRequest:
+      required:
+      - name
+      type: object
+      properties:
+        name:
+          maxLength: 255
+          minLength: 0
+          type: string
+          description: Organization display name
+          example: Acme Corporation
+        createdBy:
+          maxLength: 128
+          minLength: 0
+          type: string
+          description: Identifier of the user creating the organization
+          example: sav20006@gmail.com
+        orgType:
+          type: string
+          description: Organization tier; selects the config profile that decides
+            which steps run vs. are SKIPPED. Defaults to STANDARD when omitted.
+          example: STANDARD
+          default: STANDARD
+          enum:
+          - STANDARD
+          - INTERNAL
+          - ENTERPRISE
+      description: Request to provision a new organization
+    ApiErrorResponse:
+      type: object
+      properties:
+        status:
+          type: integer
+          description: HTTP status code
+          format: int32
+          example: 400
+        error:
+          type: string
+          description: "Short, machine-readable error code"
+          example: VALIDATION_FAILED
+        message:
+          type: string
+          description: Human-readable error message
+          example: Request validation failed
+        timestamp:
+          type: string
+          description: When the error was generated
+          format: date-time
+          example: 2026-07-08T12:34:56Z
+        violations:
+          type: array
+          description: Field-level validation violations; present only for validation
+            errors
+          items:
+            $ref: "#/components/schemas/FieldViolation"
+      description: Standard error payload returned for 4xx/5xx responses
+    FieldViolation:
+      type: object
+      properties:
+        field:
+          type: string
+          description: Offending request field
+          example: name
+        message:
+          type: string
+          description: Why the field is invalid
+          example: must not be blank
+      description: A single field validation violation
+    CreateOrganizationResponse:
+      type: object
+      properties:
+        jobId:
+          type: string
+          description: Id of the created provisioning job; poll it for progress
+          format: uuid
+          example: 8b1b2f2c-4a11-4e7a-9c6b-7a1c3b2a0e11
+        status:
+          type: string
+          description: Workflow status at acceptance time
+          example: IN_PROGRESS
+          enum:
+          - PENDING
+          - IN_PROGRESS
+          - SUCCESS
+          - FAILED
+      description: Acknowledgement returned when a provisioning job is accepted
+    ProvisionJobResponse:
+      type: object
+      properties:
+        jobId:
+          type: string
+          description: Provisioning job id
+          format: uuid
+          example: 8b1b2f2c-4a11-4e7a-9c6b-7a1c3b2a0e11
+        status:
+          type: string
+          description: Overall workflow status
+          example: IN_PROGRESS
+          enum:
+          - PENDING
+          - IN_PROGRESS
+          - SUCCESS
+          - FAILED
+        currentStep:
+          type: string
+          description: Step currently executing; null once the job reaches a terminal
+            state
+          example: SETUP_DEFAULT_BRANDING_PRM_PREFERENCES
+          enum:
+          - CREATE_ORG_IN_FSP
+          - SETUP_ORG_IN_FSP
+          - ASSIGN_FSP_RECOMMENDATION_MODELS
+          - SETUP_DEFAULT_BRANDING_PRM_PREFERENCES
+          - SETUP_DEFAULT_PRM_PREFERENCES
+          - SETUP_DEFAULT_RFS_UI_PRM_PREFERENCES
+          - SETUP_DEFAULT_VOCABULARIES_IN_CE
+          - SETUP_DEFAULT_DATASOURCES_IN_FSP
+          - SETUP_DEFAULT_CITATIONS
+          - ENABLE_PRM_LICENSES
+          - DISABLE_PRM_LICENSES
+          - SETUP_FSP_BOOSTERS
+        progress:
+          type: integer
+          description: Number of steps that have reached a terminal state (SUCCESS
+            or SKIPPED)
+          format: int32
+          example: 3
+        totalSteps:
+          type: integer
+          description: Total number of steps in the workflow
+          format: int32
+          example: 12
+        steps:
+          type: array
+          description: "Per-step status, in execution order"
+          items:
+            $ref: "#/components/schemas/ProvisionStepResponse"
+      description: Full provisioning workflow state for a job
+    ProvisionStepResponse:
+      type: object
+      properties:
+        name:
+          type: string
+          description: Step identifier
+          example: CREATE_ORG_IN_FSP
+          enum:
+          - CREATE_ORG_IN_FSP
+          - SETUP_ORG_IN_FSP
+          - ASSIGN_FSP_RECOMMENDATION_MODELS
+          - SETUP_DEFAULT_BRANDING_PRM_PREFERENCES
+          - SETUP_DEFAULT_PRM_PREFERENCES
+          - SETUP_DEFAULT_RFS_UI_PRM_PREFERENCES
+          - SETUP_DEFAULT_VOCABULARIES_IN_CE
+          - SETUP_DEFAULT_DATASOURCES_IN_FSP
+          - SETUP_DEFAULT_CITATIONS
+          - ENABLE_PRM_LICENSES
+          - DISABLE_PRM_LICENSES
+          - SETUP_FSP_BOOSTERS
+        status:
+          type: string
+          description: Step status
+          example: SUCCESS
+          enum:
+          - NOT_STARTED
+          - IN_PROGRESS
+          - SUCCESS
+          - FAILED
+          - SKIPPED
+        errorCode:
+          type: string
+          description: Error code from the failed downstream call; present only when
+            status is FAILED
+          example: "401"
+        errorMessage:
+          type: string
+          description: Error message from the failed downstream call; present only
+            when status is FAILED
+          example: Unauthorized
+      description: Status of a single provisioning step
