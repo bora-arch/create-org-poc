@@ -181,7 +181,7 @@ paths:
               example:
                 status: 404
                 error: NOT_FOUND
-                message: 'Provision job not found: 8b1b2f2c-4a11-4e7a-9c6b-7a1c3b2a0e11'
+                message: 'Job not found: 8b1b2f2c-4a11-4e7a-9c6b-7a1c3b2a0e11'
                 timestamp: 2026-07-07T10:15:02.100Z
         '500':
           $ref: '#/components/responses/InternalError'
