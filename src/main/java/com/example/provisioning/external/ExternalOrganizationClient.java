@@ -9,7 +9,7 @@ import java.util.UUID;
  */
 public interface ExternalOrganizationClient {
 
-    UUID createOrgInFsp(String name);
+    void createOrgInFsp(UUID orgUid);
 
     void setupOrgInFsp(UUID organizationId);
 

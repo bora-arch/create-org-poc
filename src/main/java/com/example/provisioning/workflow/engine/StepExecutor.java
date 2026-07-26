@@ -26,6 +26,12 @@ import java.util.UUID;
  * time. In production, a long-running external call would be split
  * into two short transactions bracketing the call — the same shape,
  * just with the {@code @Transactional} boundary moved.
+ *
+ * <p>{@code noRollbackFor} is required: this method deliberately
+ * throws {@link StepExecutionException} to signal the orchestrator to
+ * halt, but Spring's default rule rolls back the surrounding
+ * transaction on any unchecked exception — which would silently
+ * discard the {@code markFailed} write this method just made.
  */
 @Component
 @RequiredArgsConstructor
@@ -35,7 +41,7 @@ public class StepExecutor {
     private final StepRepository stepRepository;
     private final StepFailureTranslator failureTranslator;
 
-    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    @Transactional(propagation = Propagation.REQUIRES_NEW, noRollbackFor = StepExecutionException.class)
     public void execute(UUID jobId, ProvisionStep step, ProvisionContext context) {
         OrganizationProvisionStep row = loadStepRow(jobId, step.name());
         Instant started = Instant.now();

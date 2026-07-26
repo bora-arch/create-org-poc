@@ -32,4 +32,13 @@ class StepFailureTranslatorTest {
         assertThat(failure.errorCode()).isEqualTo("INTERNAL_ERROR");
         assertThat(failure.errorMessage()).isEqualTo("NullPointerException");
     }
+
+    @Test
+    void requestValidationExceptionSurfacesAsValidationFailed() {
+        StepFailure failure = translator.translate(
+            new RequestValidationException("org_uid must be a valid UUID"));
+
+        assertThat(failure.errorCode()).isEqualTo("VALIDATION_FAILED");
+        assertThat(failure.errorMessage()).isEqualTo("org_uid must be a valid UUID");
+    }
 }

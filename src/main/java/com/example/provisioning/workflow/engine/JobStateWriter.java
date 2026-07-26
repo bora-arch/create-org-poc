@@ -1,5 +1,6 @@
 package com.example.provisioning.workflow.engine;
 
+import com.example.provisioning.domain.model.OrgType;
 import com.example.provisioning.domain.model.OrganizationProvisionJob;
 import com.example.provisioning.domain.model.StepName;
 import com.example.provisioning.domain.model.WorkflowStatus;
@@ -40,10 +41,15 @@ public class JobStateWriter {
         workflowRepository.save(job);
     }
 
+    /**
+     * Persists the org type resolved by {@code INITIAL_REQUEST_VALIDATION}
+     * so a later resumed run can reconstruct it without re-validating
+     * the request.
+     */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
-    public void markOrganizationId(UUID jobId, UUID organizationId) {
+    public void markOrgTypeResolved(UUID jobId, OrgType orgType) {
         OrganizationProvisionJob job = load(jobId);
-        job.setOrganizationId(organizationId);
+        job.setOrgType(orgType);
         workflowRepository.save(job);
     }
 

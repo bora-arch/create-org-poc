@@ -1,6 +1,7 @@
 package com.example.provisioning.domain.model;
 
 public enum StepName {
+    INITIAL_REQUEST_VALIDATION,
     CREATE_ORG_IN_FSP,
     SETUP_ORG_IN_FSP,
     ASSIGN_FSP_RECOMMENDATION_MODELS,

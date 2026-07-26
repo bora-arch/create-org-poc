@@ -20,7 +20,7 @@ flowchart TB
             orch["ProvisionWorkflowService<br/>ProvisionWorkflowAsyncRunner<br/>StepExecutor<br/>StepRegistry<br/>StepFailureTranslator<br/>JobStateWriter<br/>DefaultConfigProvider"]
         end
         subgraph steps["workflow.steps"]
-            step_beans["12 concrete steps"]
+            step_beans["13 concrete steps (INITIAL_REQUEST_VALIDATION + 12)"]
         end
         subgraph query["workflow.query"]
             qs["ProvisionJobQueryService"]
@@ -65,12 +65,16 @@ classDiagram
 
     class ProvisionContext {
         -jobId : UUID
-        -organizationName : String
+        -rawOrgUid : String
+        -rawOrgType : String
+        -serviceUserAccount : String
+        -externalJobUid : String
         -organizationId : UUID
         -orgType : OrgType
         -enabledSections : Set
         -attributes : Map
         +hasSection(section) boolean
+        +markValidated(orgId, orgType, sections) void
         +get(key, type) Optional
         +put(key, value) void
     }
@@ -80,12 +84,15 @@ classDiagram
     }
 
     class ProvisionWorkflowService {
-        +createJob(name, createdBy, orgType) Job
-        +execute(jobId, name, createdBy, orgType) void
+        +findOrCreateJob(orgUid, serviceUserAccount, externalJobUid) Job
+        +firstPendingStepOrder(jobId) int
+        +validateSynchronously(jobId, rawOrgUid, rawOrgType, serviceUserAccount, externalJobUid) boolean
+        +markResuming(jobId) void
+        +execute(jobId, rawOrgUid, serviceUserAccount, externalJobUid, resumeFromOrder) void
     }
 
     class ProvisionWorkflowAsyncRunner {
-        +run(jobId, name, createdBy, orgType) void
+        +run(jobId, rawOrgUid, serviceUserAccount, externalJobUid, resumeFromOrder) void
     }
 
     class StepRegistry {
@@ -105,7 +112,7 @@ classDiagram
     class JobStateWriter {
         +markStarted(jobId) void
         +markCurrentStep(jobId, name) void
-        +markOrganizationId(jobId, orgId) void
+        +markOrgTypeResolved(jobId, orgType) void
         +markFinished(jobId, status) void
     }
 
@@ -118,8 +125,8 @@ classDiagram
     }
 
     class OrganizationProvisionJob {
-        id, organizationId, orgType, status,
-        currentStep, startedAt, finishedAt, createdBy
+        id, orgUid, externalJobUid, orgType, status,
+        currentStep, startedAt, finishedAt, serviceUserAccount
     }
 
     class OrganizationProvisionStep {
@@ -139,6 +146,7 @@ classDiagram
     JobStateWriter --> OrganizationProvisionJob
     ProvisionJobQueryService --> OrganizationProvisionJob
     ProvisionJobQueryService --> OrganizationProvisionStep
+    ProvisionStep <|.. InitialRequestValidationStep
     ProvisionStep <|.. CreateOrgInFspStep
     ProvisionStep <|.. SetupOrgInFspStep
     ProvisionStep <|.. AssignFspRecommendationModelsStep
@@ -168,19 +176,29 @@ sequenceDiagram
     participant Ext as ExternalOrganizationClient
     participant DB as H2 (job / step rows)
 
-    Client->>OC: POST /organizations {name, createdBy, orgType}
-    OC->>WS: createJob(name, createdBy, orgType)
-    WS->>DB: INSERT job (PENDING, orgType)
-    WS->>DB: INSERT 12 step rows (NOT_STARTED)
-    WS-->>OC: job (id)
-    OC->>AR: run(jobId, ..., orgType)
-    OC-->>Client: 202 { jobId, status: IN_PROGRESS }
+    Client->>OC: POST /organizations {org_uid, org_type, service_user_account, external_job_uid}
+    OC->>WS: findOrCreateJob(orgUid, serviceUserAccount, externalJobUid)
+    WS->>DB: INSERT job (PENDING)
+    WS->>DB: INSERT 13 step rows (NOT_STARTED)
+    WS-->>OC: job (id, status=PENDING)
+    OC->>WS: firstPendingStepOrder(jobId)
+    WS-->>OC: 0 (INITIAL_REQUEST_VALIDATION)
+    OC->>WS: validateSynchronously(jobId, rawOrgUid, rawOrgType, ...)
+    Note over OC,WS: runs on the request thread, not async
+    WS->>DB: UPDATE job status=IN_PROGRESS
+    WS->>DB: UPDATE step INITIAL_REQUEST_VALIDATION status=SUCCESS
+    WS-->>OC: true (valid)
+    OC->>WS: firstPendingStepOrder(jobId)
+    WS-->>OC: 10 (CREATE_ORG_IN_FSP)
+    OC->>WS: markResuming(jobId)
+    OC->>AR: run(jobId, orgUid, serviceUserAccount, externalJobUid, resumeFromOrder=10)
+    OC-->>Client: 202 { jobId, orgUid, externalJobUid, status: IN_PROGRESS, progress: 1 }
 
     Note over AR,DB: async — provisioning-N thread pool
 
-    AR->>WS: execute(jobId, ..., orgType)
+    AR->>WS: execute(jobId, ..., resumeFromOrder=10)
     WS->>DB: UPDATE job status=IN_PROGRESS
-    loop each step in registry.ordered()
+    loop each step in registry.ordered() with order >= resumeFromOrder
         alt step.shouldRun(ctx) == false
             WS->>SE: skip(jobId, step)
             SE->>DB: UPDATE step status=SKIPPED, finishedAt
@@ -198,7 +216,7 @@ sequenceDiagram
     WS->>DB: UPDATE job status=SUCCESS, finishedAt
 
     Client->>OC: GET /organization-provision-jobs/{jobId}
-    OC-->>Client: 200 { status: SUCCESS, progress: 12, steps: [...] }
+    OC-->>Client: 200 { status: SUCCESS, progress: 13, steps: [...] }
 ```
 
 ## Sequence — failed workflow
@@ -222,9 +240,50 @@ sequenceDiagram
     SE->>FT: translate(exception)
     FT-->>SE: StepFailure("401", "Unauthorized")
     SE->>DB: UPDATE step ASSIGN_FSP_RECOMMENDATION_MODELS status=FAILED, errorCode, errorMessage
+    Note over SE: @Transactional(REQUIRES_NEW, noRollbackFor=StepExecutionException) — the FAILED write survives the throw
     SE--x WS: StepExecutionException(ASSIGN_FSP_RECOMMENDATION_MODELS)
     WS->>DB: UPDATE job status=FAILED, finishedAt
     Note over DB: SETUP_DEFAULT_BRANDING_PRM_PREFERENCES..SETUP_FSP_BOOSTERS remain NOT_STARTED (pre-seeded)
+```
+
+## Sequence — retry resumes at the failed step
+
+Same request body, same `org_uid`, resubmitted after the failure above.
+`CREATE_ORG_IN_FSP` / `SETUP_ORG_IN_FSP` (already `SUCCESS`) and
+`INITIAL_REQUEST_VALIDATION` (already `SUCCESS`) are **not** re-run —
+`resumeFromOrder` skips every step ordered below the first non-terminal
+one.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Client
+    participant OC as OrganizationController
+    participant WS as ProvisionWorkflowService
+    participant AR as AsyncRunner
+    participant DB as H2
+
+    Client->>OC: POST /organizations {org_uid: <same>, ...}
+    OC->>WS: findOrCreateJob(orgUid, ...)
+    WS->>DB: SELECT job WHERE org_uid = ?
+    DB-->>WS: existing job, status=FAILED
+    WS-->>OC: job (existing)
+    OC->>WS: firstPendingStepOrder(jobId)
+    WS->>DB: SELECT steps WHERE job_id = ? ORDER BY step_order
+    Note over WS: first NOT_STARTED/FAILED = ASSIGN_FSP_RECOMMENDATION_MODELS (order 30)
+    WS-->>OC: 30
+    Note over OC: 30 != INITIAL_REQUEST_VALIDATION.ORDER(0) — sync validation is skipped
+    OC->>WS: markResuming(jobId)
+    WS->>DB: UPDATE job status=IN_PROGRESS
+    OC->>AR: run(jobId, ..., resumeFromOrder=30)
+    OC-->>Client: 202 { status: IN_PROGRESS, progress: 2, ... }
+
+    Note over AR,DB: async
+    AR->>WS: execute(jobId, ..., resumeFromOrder=30)
+    Note over WS: reconstructs orgType/enabledSections from the persisted job row (validation already succeeded)
+    Note over WS: steps with order < 30 (INITIAL_REQUEST_VALIDATION, CREATE_ORG_IN_FSP, SETUP_ORG_IN_FSP) are skipped entirely — not re-executed
+    WS->>DB: retry ASSIGN_FSP_RECOMMENDATION_MODELS, then continue through SETUP_FSP_BOOSTERS
+    WS->>DB: UPDATE job status=SUCCESS
 ```
 
 ## State transitions
@@ -264,14 +323,16 @@ the job.
 
 ## Sequence — conditional skip (SKIPPED)
 
-The request's `orgType` selects a profile in `default_config.json`;
-`DefaultConfigProvider` resolves the enabled sections into the context.
-Each step's `shouldRun(ctx)` checks its section — a missing section
-means the step is skipped with no external call.
+The request's `org_type` (`base` / `internal` / `enterprise`) is resolved
+by `INITIAL_REQUEST_VALIDATION` into an `OrgType` (`base` → `STANDARD`)
+and published onto the context via `markValidated`; `DefaultConfigProvider`
+resolves that type's enabled sections. Each later step's `shouldRun(ctx)`
+checks its section — a missing section means the step is skipped with no
+external call.
 
-Shown for `orgType = STANDARD`, whose profile has `license` but not
-`boosters`: `ENABLE_PRM_LICENSES` runs, `DISABLE_PRM_LICENSES` and
-`SETUP_FSP_BOOSTERS` are skipped.
+Shown for `org_type = "base"` (→ `OrgType.STANDARD`), whose profile has
+`license` but not `boosters`: `ENABLE_PRM_LICENSES` runs,
+`DISABLE_PRM_LICENSES` and `SETUP_FSP_BOOSTERS` are skipped.
 
 ```mermaid
 sequenceDiagram

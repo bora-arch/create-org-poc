@@ -4,7 +4,7 @@ info:
   description: |-
     Asynchronous, orchestrator-driven organization provisioning.
 
-    `POST /organizations` accepts a create request, returns `202 Accepted` with a job id, and drives a sequence of 12 external provisioning steps in the background. `GET /organization-provision-jobs/{jobId}` returns the full workflow state — per-step status (including `SKIPPED` steps that do not apply to the org tier), the current step, and progress — for a UI to poll and render.
+    `POST /organizations` accepts a create/retry request and drives a sequence of 13 provisioning steps — `INITIAL_REQUEST_VALIDATION` always first, then 12 external provisioning steps. `org_uid` is the idempotency/retry key: resubmitting the same `org_uid` resumes a previously FAILED job at its failed step (fail-fast — later steps never ran) instead of starting over. `INITIAL_REQUEST_VALIDATION` runs synchronously: an invalid request never starts the background workflow and the call returns immediately with `status: FAILED`, the `external_job_uid`, and the failed step's error. Otherwise the remaining steps run asynchronously and `202 Accepted` is returned. `GET /organization-provision-jobs/{jobId}` returns the full workflow state — per-step status (including `SKIPPED` steps that do not apply to the org tier), the current step, and progress — for a UI to poll and render.
   contact:
     name: create-org-poc
     url: https://github.com/bora-arch/create-org-poc
@@ -17,7 +17,7 @@ servers:
   description: Local development server
 tags:
 - name: Organizations
-  description: Kick off organization provisioning workflows
+  description: Kick off (or retry) organization provisioning workflows
 - name: Provision Jobs
   description: Poll the state of an organization provisioning workflow
 paths:
@@ -25,10 +25,15 @@ paths:
     post:
       tags:
       - Organizations
-      summary: Create an organization
-      description: "Registers a provisioning job and immediately returns 202 Accepted\
-        \ with its job id. The 12-step provisioning workflow then runs asynchronously;\
-        \ poll GET /organization-provision-jobs/{jobId} for progress."
+      summary: Create (or retry) an organization provisioning job
+      description: "org_uid is the idempotency/retry key: resubmitting the same\
+        \ org_uid resumes a previously failed job from its failed step (fail-fast\
+        \ — later steps never ran) instead of starting over. INITIAL_REQUEST_VALIDATION\
+        \ always runs first and, when it runs, runs synchronously: an invalid request\
+        \ never starts the async workflow and this call returns immediately with\
+        \ status FAILED, the external_job_uid, and the failed step's error. Otherwise\
+        \ the remaining steps run asynchronously and 202 Accepted is returned; poll\
+        \ GET /organization-provision-jobs/{jobId} for progress."
       operationId: createOrganization
       requestBody:
         content:
@@ -43,12 +48,20 @@ paths:
             '*/*':
               schema:
                 $ref: "#/components/schemas/ApiErrorResponse"
-        "202":
-          description: Provisioning job accepted and started asynchronously
+        "200":
+          description: Request rejected by INITIAL_REQUEST_VALIDATION (status FAILED),
+            or the job for this org_uid was already SUCCESS/IN_PROGRESS and was
+            not restarted
           content:
             '*/*':
               schema:
-                $ref: "#/components/schemas/CreateOrganizationResponse"
+                $ref: "#/components/schemas/ProvisionJobResponse"
+        "202":
+          description: Provisioning (re)started asynchronously
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/ProvisionJobResponse"
   /organization-provision-jobs/{jobId}:
     get:
       tags:
@@ -83,32 +96,49 @@ components:
   schemas:
     CreateOrganizationRequest:
       required:
-      - name
+      - org_uid
+      - org_type
+      - service_user_account
+      - external_job_uid
       type: object
       properties:
-        name:
+        org_uid:
           maxLength: 255
           minLength: 0
           type: string
-          description: Organization display name
-          example: Acme Corporation
-        createdBy:
-          maxLength: 128
+          description: Client-supplied organization identifier (UUID). Also the
+            idempotency/retry key — resubmitting the same org_uid resumes a failed
+            job from its failed step instead of starting over.
+          example: 3f2a9c14-7b41-4e2a-9c31-8a2f6d1eb7d2
+        org_type:
+          maxLength: 64
           minLength: 0
           type: string
-          description: Identifier of the user creating the organization
-          example: sav20006@gmail.com
-        orgType:
-          type: string
           description: Organization tier; selects the config profile that decides
-            which steps run vs. are SKIPPED. Defaults to STANDARD when omitted.
-          example: STANDARD
-          default: STANDARD
-          enum:
-          - STANDARD
-          - INTERNAL
-          - ENTERPRISE
-      description: Request to provision a new organization
+            which steps run vs. are SKIPPED. One of base, internal, enterprise.
+          example: base
+        service_user_account:
+          maxLength: 255
+          minLength: 0
+          type: string
+          description: Email of the service account provisioning is performed on
+            behalf of
+          example: sav20006@gmail.com
+        external_job_uid:
+          maxLength: 255
+          minLength: 0
+          type: string
+          description: Caller-supplied job identifier, echoed back in every response
+          example: external_job_uid
+      description: |-
+        Request to provision a new organization, or retry a failed one.
+
+        Fields are validated in two stages: structural presence (400 Bad
+        Request if a field is missing/blank) here at the HTTP boundary, and
+        format/semantic validity (is org_uid really a UUID, is org_type a
+        known tier) by the INITIAL_REQUEST_VALIDATION workflow step — a
+        malformed value produces a normal step-failure response (200, status
+        FAILED) rather than a raw deserialization error.
     ApiErrorResponse:
       type: object
       properties:
@@ -143,30 +173,12 @@ components:
         field:
           type: string
           description: Offending request field
-          example: name
+          example: org_uid
         message:
           type: string
           description: Why the field is invalid
           example: must not be blank
       description: A single field validation violation
-    CreateOrganizationResponse:
-      type: object
-      properties:
-        jobId:
-          type: string
-          description: Id of the created provisioning job; poll it for progress
-          format: uuid
-          example: 8b1b2f2c-4a11-4e7a-9c6b-7a1c3b2a0e11
-        status:
-          type: string
-          description: Workflow status at acceptance time
-          example: IN_PROGRESS
-          enum:
-          - PENDING
-          - IN_PROGRESS
-          - SUCCESS
-          - FAILED
-      description: Acknowledgement returned when a provisioning job is accepted
     ProvisionJobResponse:
       type: object
       properties:
@@ -175,6 +187,15 @@ components:
           description: Provisioning job id
           format: uuid
           example: 8b1b2f2c-4a11-4e7a-9c6b-7a1c3b2a0e11
+        orgUid:
+          type: string
+          description: Client-supplied organization identifier from the request;
+            also the retry key
+          example: 3f2a9c14-7b41-4e2a-9c31-8a2f6d1eb7d2
+        externalJobUid:
+          type: string
+          description: Caller-supplied job identifier, echoed back from the request
+          example: external_job_uid
         status:
           type: string
           description: Overall workflow status
@@ -190,6 +211,7 @@ components:
             state
           example: SETUP_DEFAULT_BRANDING_PRM_PREFERENCES
           enum:
+          - INITIAL_REQUEST_VALIDATION
           - CREATE_ORG_IN_FSP
           - SETUP_ORG_IN_FSP
           - ASSIGN_FSP_RECOMMENDATION_MODELS
@@ -207,12 +229,12 @@ components:
           description: Number of steps that have reached a terminal state (SUCCESS
             or SKIPPED)
           format: int32
-          example: 3
+          example: 4
         totalSteps:
           type: integer
           description: Total number of steps in the workflow
           format: int32
-          example: 12
+          example: 13
         steps:
           type: array
           description: "Per-step status, in execution order"
@@ -225,8 +247,9 @@ components:
         name:
           type: string
           description: Step identifier
-          example: CREATE_ORG_IN_FSP
+          example: INITIAL_REQUEST_VALIDATION
           enum:
+          - INITIAL_REQUEST_VALIDATION
           - CREATE_ORG_IN_FSP
           - SETUP_ORG_IN_FSP
           - ASSIGN_FSP_RECOMMENDATION_MODELS
@@ -251,12 +274,13 @@ components:
           - SKIPPED
         errorCode:
           type: string
-          description: Error code from the failed downstream call; present only when
-            status is FAILED
+          description: Error code from the failed step; present only when status
+            is FAILED. VALIDATION_FAILED for INITIAL_REQUEST_VALIDATION, otherwise
+            the downstream call's error code
           example: "401"
         errorMessage:
           type: string
-          description: Error message from the failed downstream call; present only
-            when status is FAILED
+          description: Error message from the failed step; present only when status
+            is FAILED
           example: Unauthorized
       description: Status of a single provisioning step

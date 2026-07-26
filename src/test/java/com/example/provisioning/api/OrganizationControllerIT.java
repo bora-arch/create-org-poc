@@ -1,6 +1,7 @@
 package com.example.provisioning.api;
 
 import com.example.provisioning.domain.model.StepStatus;
+import com.example.provisioning.external.ExternalCallException;
 import com.example.provisioning.external.ExternalOrganizationClient;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -19,6 +20,8 @@ import org.springframework.test.web.servlet.MvcResult;
 import java.time.Duration;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.http.MediaType.APPLICATION_JSON;
@@ -34,14 +37,15 @@ class OrganizationControllerIT {
 
     @Autowired MockMvc mockMvc;
     @Autowired ObjectMapper objectMapper;
+    @Autowired FlakyOncePrmPreferencesClient client;
 
-    // STANDARD (the default org type) enables branding, rfs_ui, citations,
+    // "base" (the default org type) enables branding, rfs_ui, citations,
     // and license — so ASSIGN_FSP_RECOMMENDATION_MODELS, DISABLE_PRM_LICENSES,
     // and SETUP_FSP_BOOSTERS are skipped.
-    private static final Set<String> STANDARD_SKIPPED = Set.of(
+    private static final Set<String> BASE_SKIPPED = Set.of(
         "ASSIGN_FSP_RECOMMENDATION_MODELS", "DISABLE_PRM_LICENSES", "SETUP_FSP_BOOSTERS");
 
-    // INTERNAL enables no optional sections: everything conditional is
+    // internal enables no optional sections: everything conditional is
     // skipped except DISABLE_PRM_LICENSES (license section is absent).
     private static final Set<String> INTERNAL_SKIPPED = Set.of(
         "ASSIGN_FSP_RECOMMENDATION_MODELS", "SETUP_DEFAULT_BRANDING_PRM_PREFERENCES",
@@ -49,70 +53,57 @@ class OrganizationControllerIT {
         "ENABLE_PRM_LICENSES", "SETUP_FSP_BOOSTERS");
 
     @Test
-    void standardOrgTypeByDefault_skipsRecommendationDisableAndBoosters() throws Exception {
-        UUID jobId = postOrganization("""
-            {"name":"Acme","createdBy":"sav20006@gmail.com"}
-            """);
+    void baseOrgType_skipsRecommendationDisableAndBoosters() throws Exception {
+        JsonNode accepted = postOrganization(requestJson(newOrgUid(), "base", "sav20006@gmail.com", "ext-1"));
+        UUID jobId = UUID.fromString(accepted.get("jobId").asText());
 
-        awaitSuccessWithSkips(jobId, STANDARD_SKIPPED);
+        awaitSuccessWithSkips(jobId, BASE_SKIPPED);
     }
 
     @Test
     void internalOrgType_skipsAllExternalSectionsAndRunsDisableLicenses() throws Exception {
-        UUID jobId = postOrganization("""
-            {"name":"Acme","createdBy":"sav20006@gmail.com","orgType":"INTERNAL"}
-            """);
+        JsonNode accepted = postOrganization(requestJson(newOrgUid(), "internal", "sav20006@gmail.com", "ext-2"));
+        UUID jobId = UUID.fromString(accepted.get("jobId").asText());
 
         awaitSuccessWithSkips(jobId, INTERNAL_SKIPPED);
     }
 
     @Test
     void enterpriseOrgType_runsAllExceptDisableLicenses() throws Exception {
-        UUID jobId = postOrganization("""
-            {"name":"Acme","createdBy":"sav20006@gmail.com","orgType":"ENTERPRISE"}
-            """);
+        JsonNode accepted = postOrganization(requestJson(newOrgUid(), "enterprise", "sav20006@gmail.com", "ext-3"));
+        UUID jobId = UUID.fromString(accepted.get("jobId").asText());
 
         awaitSuccessWithSkips(jobId, Set.of("DISABLE_PRM_LICENSES"));
     }
 
-    private UUID postOrganization(String body) throws Exception {
+    @Test
+    void invalidOrgUid_isRejectedSynchronouslyWithFirstStepFailed() throws Exception {
         MvcResult result = mockMvc.perform(post("/organizations")
                 .contentType(APPLICATION_JSON)
-                .content(body))
-            .andExpect(status().isAccepted())
-            .andExpect(jsonPath("$.jobId").exists())
-            .andExpect(jsonPath("$.status").value("IN_PROGRESS"))
-            .andReturn();
-        JsonNode json = objectMapper.readTree(result.getResponse().getContentAsString());
-        return UUID.fromString(json.get("jobId").asText());
-    }
-
-    private void awaitSuccessWithSkips(UUID jobId, Set<String> skipped) {
-        Awaitility.await()
-            .atMost(Duration.ofSeconds(10))
-            .pollInterval(Duration.ofMillis(100))
-            .untilAsserted(() -> {
-                JsonNode state = fetchJob(jobId);
-                assertThat(state.get("status").asText()).isEqualTo("SUCCESS");
-                assertThat(state.get("progress").asInt()).isEqualTo(12);
-                assertThat(state.get("totalSteps").asInt()).isEqualTo(12);
-                assertThat(state.get("steps")).hasSize(12);
-                state.get("steps").forEach(s -> {
-                    String expected = skipped.contains(s.get("name").asText())
-                        ? StepStatus.SKIPPED.name()
-                        : StepStatus.SUCCESS.name();
-                    assertThat(s.get("status").asText())
-                        .as("step %s", s.get("name").asText())
-                        .isEqualTo(expected);
-                });
-            });
-    }
-
-    private JsonNode fetchJob(UUID jobId) throws Exception {
-        MvcResult poll = mockMvc.perform(get("/organization-provision-jobs/" + jobId))
+                .content(requestJson("not-a-uuid", "base", "sav20006@gmail.com", "ext-4")))
             .andExpect(status().isOk())
+            .andExpect(jsonPath("$.status").value("FAILED"))
+            .andExpect(jsonPath("$.externalJobUid").value("ext-4"))
+            .andExpect(jsonPath("$.steps[0].name").value("INITIAL_REQUEST_VALIDATION"))
+            .andExpect(jsonPath("$.steps[0].status").value("FAILED"))
+            .andExpect(jsonPath("$.steps[0].errorCode").value("VALIDATION_FAILED"))
+            .andExpect(jsonPath("$.steps[1].status").value("NOT_STARTED"))
             .andReturn();
-        return objectMapper.readTree(poll.getResponse().getContentAsString());
+
+        JsonNode body = objectMapper.readTree(result.getResponse().getContentAsString());
+        assertThat(body.get("steps").get(0).get("errorMessage").asText())
+            .contains("org_uid must be a valid UUID");
+    }
+
+    @Test
+    void invalidOrgType_isRejectedSynchronously() throws Exception {
+        mockMvc.perform(post("/organizations")
+                .contentType(APPLICATION_JSON)
+                .content(requestJson(newOrgUid(), "bogus-tier", "sav20006@gmail.com", "ext-5")))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.status").value("FAILED"))
+            .andExpect(jsonPath("$.steps[0].errorMessage").value(
+                org.hamcrest.Matchers.containsString("org_type must be one of")));
     }
 
     @Test
@@ -124,13 +115,111 @@ class OrganizationControllerIT {
     }
 
     @Test
-    void invalidRequestReturns400WithFieldViolations() throws Exception {
+    void missingFieldReturns400WithFieldViolations() throws Exception {
         mockMvc.perform(post("/organizations")
                 .contentType(APPLICATION_JSON)
-                .content("{\"name\":\"\"}"))
+                .content("{\"org_uid\":\"\"}"))
             .andExpect(status().isBadRequest())
-            .andExpect(jsonPath("$.error").value("VALIDATION_FAILED"))
-            .andExpect(jsonPath("$.violations[0].field").value("name"));
+            .andExpect(jsonPath("$.error").value("VALIDATION_FAILED"));
+    }
+
+    @Test
+    void retryWithSameOrgUid_resumesFromFailedStepInsteadOfRestarting() throws Exception {
+        client.armFailureOnce();
+        String orgUid = newOrgUid();
+        String body = requestJson(orgUid, "base", "sav20006@gmail.com", "ext-retry");
+
+        JsonNode firstResponse = postOrganization(body);
+        UUID jobId = UUID.fromString(firstResponse.get("jobId").asText());
+
+        JsonNode failedState = awaitStatus(jobId, "FAILED");
+        assertThat(findStep(failedState, "CREATE_ORG_IN_FSP").get("status").asText()).isEqualTo("SUCCESS");
+        assertThat(findStep(failedState, "SETUP_DEFAULT_PRM_PREFERENCES").get("status").asText())
+            .isEqualTo("FAILED");
+        assertThat(findStep(failedState, "SETUP_DEFAULT_RFS_UI_PRM_PREFERENCES").get("status").asText())
+            .isEqualTo("NOT_STARTED");
+        assertThat(client.createOrgInvocations.get()).isEqualTo(1);
+
+        // Retry: same org_uid resumes the same job at the failed step.
+        JsonNode retryResponse = postOrganization(body);
+        assertThat(retryResponse.get("jobId").asText()).isEqualTo(jobId.toString());
+
+        JsonNode successState = awaitStatus(jobId, "SUCCESS");
+        assertThat(successState.get("progress").asInt()).isEqualTo(13);
+        assertThat(successState.get("totalSteps").asInt()).isEqualTo(13);
+
+        // CREATE_ORG_IN_FSP already succeeded before the failure — must not re-run on retry.
+        assertThat(client.createOrgInvocations.get()).isEqualTo(1);
+        assertThat(client.prmPreferencesInvocations.get()).isEqualTo(2);
+    }
+
+    private JsonNode postOrganization(String body) throws Exception {
+        MvcResult result = mockMvc.perform(post("/organizations")
+                .contentType(APPLICATION_JSON)
+                .content(body))
+            .andExpect(status().isAccepted())
+            .andExpect(jsonPath("$.jobId").exists())
+            .andExpect(jsonPath("$.status").value("IN_PROGRESS"))
+            .andReturn();
+        return objectMapper.readTree(result.getResponse().getContentAsString());
+    }
+
+    private void awaitSuccessWithSkips(UUID jobId, Set<String> skipped) {
+        Awaitility.await()
+            .atMost(Duration.ofSeconds(10))
+            .pollInterval(Duration.ofMillis(100))
+            .untilAsserted(() -> {
+                JsonNode state = fetchJob(jobId);
+                assertThat(state.get("status").asText()).isEqualTo("SUCCESS");
+                assertThat(state.get("progress").asInt()).isEqualTo(13);
+                assertThat(state.get("totalSteps").asInt()).isEqualTo(13);
+                assertThat(state.get("steps")).hasSize(13);
+                state.get("steps").forEach(s -> {
+                    String name = s.get("name").asText();
+                    if (name.equals("INITIAL_REQUEST_VALIDATION")) {
+                        assertThat(s.get("status").asText()).isEqualTo("SUCCESS");
+                        return;
+                    }
+                    String expected = skipped.contains(name)
+                        ? StepStatus.SKIPPED.name()
+                        : StepStatus.SUCCESS.name();
+                    assertThat(s.get("status").asText()).as("step %s", name).isEqualTo(expected);
+                });
+            });
+    }
+
+    private JsonNode awaitStatus(UUID jobId, String status) {
+        return Awaitility.await()
+            .atMost(Duration.ofSeconds(10))
+            .pollInterval(Duration.ofMillis(100))
+            .until(() -> fetchJob(jobId), state -> state.get("status").asText().equals(status));
+    }
+
+    private JsonNode findStep(JsonNode state, String name) {
+        for (JsonNode step : state.get("steps")) {
+            if (step.get("name").asText().equals(name)) {
+                return step;
+            }
+        }
+        throw new AssertionError("No step named " + name);
+    }
+
+    private JsonNode fetchJob(UUID jobId) throws Exception {
+        MvcResult poll = mockMvc.perform(get("/organization-provision-jobs/" + jobId))
+            .andExpect(status().isOk())
+            .andReturn();
+        return objectMapper.readTree(poll.getResponse().getContentAsString());
+    }
+
+    private static String newOrgUid() {
+        return UUID.randomUUID().toString();
+    }
+
+    private static String requestJson(String orgUid, String orgType, String serviceUserAccount,
+                                      String externalJobUid) {
+        return """
+            {"org_uid":"%s","org_type":"%s","service_user_account":"%s","external_job_uid":"%s"}
+            """.formatted(orgUid, orgType, serviceUserAccount, externalJobUid);
     }
 
     @TestConfiguration
@@ -138,22 +227,55 @@ class OrganizationControllerIT {
 
         @Bean
         @Primary
-        ExternalOrganizationClient alwaysSucceedsClient() {
-            return new ExternalOrganizationClient() {
-                @Override public UUID createOrgInFsp(String name) { return UUID.randomUUID(); }
-                @Override public void setupOrgInFsp(UUID organizationId) { }
-                @Override public void assignFspRecommendationModels(UUID organizationId) { }
-                @Override public void setupDefaultBrandingPrmPreferences(UUID organizationId) { }
-                @Override public void setupDefaultPrmPreferences(UUID organizationId) { }
-                @Override public void setupDefaultRfsUiPrmPreferences(UUID organizationId) { }
-                @Override public void setupDefaultVocabulariesInCe(UUID organizationId) { }
-                @Override public void setupDefaultDatasourcesInFsp(UUID organizationId) { }
-                @Override public void setupDefaultCitations(UUID organizationId) { }
-                @Override public void enablePrmLicenses(UUID organizationId) { }
-                @Override public void disablePrmLicenses(UUID organizationId) { }
-                @Override public void setupFspBoosters(UUID organizationId) { }
-            };
+        FlakyOncePrmPreferencesClient flakyOnceClient() {
+            return new FlakyOncePrmPreferencesClient();
         }
     }
 
+    /**
+     * Deterministic client: every call succeeds except the first
+     * invocation of {@code setupDefaultPrmPreferences}, which fails
+     * once (simulating a transient downstream error) so the retry/resume
+     * behaviour can be exercised without relying on the mock's random
+     * failures.
+     */
+    static class FlakyOncePrmPreferencesClient implements ExternalOrganizationClient {
+
+        final AtomicInteger createOrgInvocations = new AtomicInteger();
+        final AtomicInteger prmPreferencesInvocations = new AtomicInteger();
+        private final AtomicBoolean failPrmPreferencesOnce = new AtomicBoolean(false);
+
+        /**
+         * Defaults to never failing, since this client is shared (as the
+         * {@code @Primary} bean) across every test in the class. Only the
+         * retry test arms the one-shot failure right before it needs it,
+         * so the other tests are unaffected regardless of execution order.
+         */
+        void armFailureOnce() {
+            createOrgInvocations.set(0);
+            prmPreferencesInvocations.set(0);
+            failPrmPreferencesOnce.set(true);
+        }
+
+        @Override public void createOrgInFsp(UUID orgUid) { createOrgInvocations.incrementAndGet(); }
+        @Override public void setupOrgInFsp(UUID organizationId) { }
+        @Override public void assignFspRecommendationModels(UUID organizationId) { }
+        @Override public void setupDefaultBrandingPrmPreferences(UUID organizationId) { }
+
+        @Override
+        public void setupDefaultPrmPreferences(UUID organizationId) {
+            prmPreferencesInvocations.incrementAndGet();
+            if (failPrmPreferencesOnce.compareAndSet(true, false)) {
+                throw new ExternalCallException("500", "Simulated transient failure");
+            }
+        }
+
+        @Override public void setupDefaultRfsUiPrmPreferences(UUID organizationId) { }
+        @Override public void setupDefaultVocabulariesInCe(UUID organizationId) { }
+        @Override public void setupDefaultDatasourcesInFsp(UUID organizationId) { }
+        @Override public void setupDefaultCitations(UUID organizationId) { }
+        @Override public void enablePrmLicenses(UUID organizationId) { }
+        @Override public void disablePrmLicenses(UUID organizationId) { }
+        @Override public void setupFspBoosters(UUID organizationId) { }
+    }
 }

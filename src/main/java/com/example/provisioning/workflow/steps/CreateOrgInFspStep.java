@@ -7,8 +7,6 @@ import com.example.provisioning.workflow.spi.ProvisionStep;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
-import java.util.UUID;
-
 @Component
 @RequiredArgsConstructor
 public class CreateOrgInFspStep implements ProvisionStep {
@@ -27,7 +25,6 @@ public class CreateOrgInFspStep implements ProvisionStep {
 
     @Override
     public void execute(ProvisionContext context) {
-        UUID organizationId = client.createOrgInFsp(context.getOrganizationName());
-        context.setOrganizationId(organizationId);
+        client.createOrgInFsp(context.getOrganizationId());
     }
 }
