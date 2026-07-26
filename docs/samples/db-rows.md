@@ -3,7 +3,7 @@
 The workflow persists two tables (H2 in the POC): one job row in
 `organization_provision_job` and one row per catalog step in
 `organization_provision_step`. Below is a completed job created with
-`org_type = "base"` (resolved to `OrgType.STANDARD`). That profile
+`org_type = "STANDARD"`. That profile
 ([`default_config.json`](../../src/main/resources/default_config.json))
 enables `branding`, `rfs_ui_prm_preferences`, `citations`, and
 `license` — so three steps are **skipped**:
@@ -53,9 +53,9 @@ A `SKIPPED` row has **no `started_at`** and **no `duration_ms`**
 skip decision was recorded. `error_code` / `error_message` stay null —
 a skip is not a failure.
 
-Other tiers resolve differently: `internal` skips every optional section
+Other tiers resolve differently: `INTERNAL` skips every optional section
 (only the six core steps plus `DISABLE_PRM_LICENSES` run), while
-`enterprise` runs everything except `DISABLE_PRM_LICENSES`.
+`ENTERPRISE` runs everything except `DISABLE_PRM_LICENSES`.
 
 ## Retry / resume example
 

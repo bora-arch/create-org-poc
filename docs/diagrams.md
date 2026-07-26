@@ -323,16 +323,17 @@ the job.
 
 ## Sequence — conditional skip (SKIPPED)
 
-The request's `org_type` (`base` / `internal` / `enterprise`) is resolved
-by `INITIAL_REQUEST_VALIDATION` into an `OrgType` (`base` → `STANDARD`)
-and published onto the context via `markValidated`; `DefaultConfigProvider`
+The request's `org_type` must exactly match one of the `OrgType` enum
+constants (`STANDARD` / `INTERNAL` / `ENTERPRISE`) — `INITIAL_REQUEST_VALIDATION`
+parses it via `OrgType.valueOf(...)` (no case-insensitive or alias mapping)
+and publishes it onto the context via `markValidated`; `DefaultConfigProvider`
 resolves that type's enabled sections. Each later step's `shouldRun(ctx)`
 checks its section — a missing section means the step is skipped with no
 external call.
 
-Shown for `org_type = "base"` (→ `OrgType.STANDARD`), whose profile has
-`license` but not `boosters`: `ENABLE_PRM_LICENSES` runs,
-`DISABLE_PRM_LICENSES` and `SETUP_FSP_BOOSTERS` are skipped.
+Shown for `org_type = "STANDARD"`, whose profile has `license` but not
+`boosters`: `ENABLE_PRM_LICENSES` runs, `DISABLE_PRM_LICENSES` and
+`SETUP_FSP_BOOSTERS` are skipped.
 
 ```mermaid
 sequenceDiagram
