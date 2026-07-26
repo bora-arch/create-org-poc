@@ -83,7 +83,7 @@ public class InitialRequestValidationStep implements ProvisionStep {
     private OrgType resolveOrgType(String rawOrgType, List<String> violations) {
         OrgType resolved = mapOrgType(rawOrgType);
         if (resolved == null) {
-            violations.add("org_type must be one of: base, internal, enterprise");
+            violations.add("org_type must be one of: standard, internal, enterprise");
         }
         return resolved;
     }
@@ -94,7 +94,7 @@ public class InitialRequestValidationStep implements ProvisionStep {
         }
         String normalized = rawOrgType.trim().toLowerCase(Locale.ROOT);
         return switch (normalized) {
-            case "base", "standard" -> OrgType.STANDARD;
+            case "standard" -> OrgType.STANDARD;
             case "internal" -> OrgType.INTERNAL;
             case "enterprise" -> OrgType.ENTERPRISE;
             default -> null;

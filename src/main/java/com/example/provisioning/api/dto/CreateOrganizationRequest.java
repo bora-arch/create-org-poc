@@ -27,8 +27,8 @@ public record CreateOrganizationRequest(
 
     @JsonProperty("org_type")
     @Schema(description = "Organization tier; selects the config profile that decides "
-        + "which steps run vs. are SKIPPED. One of: base, internal, enterprise.",
-        example = "base", requiredMode = Schema.RequiredMode.REQUIRED)
+        + "which steps run vs. are SKIPPED. One of: standard, internal, enterprise.",
+        example = "standard", requiredMode = Schema.RequiredMode.REQUIRED)
     @NotBlank @Size(max = 64) String orgType,
 
     @JsonProperty("service_user_account")

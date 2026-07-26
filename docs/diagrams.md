@@ -323,14 +323,14 @@ the job.
 
 ## Sequence — conditional skip (SKIPPED)
 
-The request's `org_type` (`base` / `internal` / `enterprise`) is resolved
-by `INITIAL_REQUEST_VALIDATION` into an `OrgType` (`base` → `STANDARD`)
+The request's `org_type` (`standard` / `internal` / `enterprise`) is resolved
+by `INITIAL_REQUEST_VALIDATION` into an `OrgType` (`standard` → `STANDARD`)
 and published onto the context via `markValidated`; `DefaultConfigProvider`
 resolves that type's enabled sections. Each later step's `shouldRun(ctx)`
 checks its section — a missing section means the step is skipped with no
 external call.
 
-Shown for `org_type = "base"` (→ `OrgType.STANDARD`), whose profile has
+Shown for `org_type = "standard"` (→ `OrgType.STANDARD`), whose profile has
 `license` but not `boosters`: `ENABLE_PRM_LICENSES` runs,
 `DISABLE_PRM_LICENSES` and `SETUP_FSP_BOOSTERS` are skipped.
 

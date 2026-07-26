@@ -115,8 +115,8 @@ components:
           minLength: 0
           type: string
           description: Organization tier; selects the config profile that decides
-            which steps run vs. are SKIPPED. One of base, internal, enterprise.
-          example: base
+            which steps run vs. are SKIPPED. One of standard, internal, enterprise.
+          example: standard
         service_user_account:
           maxLength: 255
           minLength: 0
