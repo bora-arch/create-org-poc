@@ -4,6 +4,8 @@ The POC deliberately stops at the minimum shape that demonstrates the orchestrat
 
 ## 1. Retry with per-step policy
 
+Job-level resume — resubmitting `POST /organizations` with the same `org_uid` continues a `FAILED` job at its failed step instead of restarting — is already implemented (`ProvisionWorkflowService.firstPendingStepOrder` + `execute(..., resumeFromOrder)`). What's not implemented is *automatic*, *per-step* retry (attempt count, backoff, dead-letter) without a new client request:
+
 Add a default method to the SPI:
 
 ```java
@@ -52,7 +54,7 @@ In both cases the domain layer (entities, DTOs, controllers, mock external clien
 
 ## 6. Idempotent POST
 
-`POST /organizations` should accept an `Idempotency-Key` header and dedupe within a TTL — otherwise a mobile client retrying a timed-out request will spawn a duplicate provisioning job. Two-line change: a `Filter` that looks up the key in a Caffeine cache backed by a table.
+`org_uid` already makes `POST /organizations` idempotent at the job level — the same `org_uid` always maps to the same job row (`WorkflowRepository.findByOrgUid`), and a `SUCCESS`/`IN_PROGRESS` job is returned as-is rather than restarted. What's still missing is protection against two concurrent requests for a *new* `org_uid` racing to create two job rows (no unique-constraint-violation handling / row-level locking around `findOrCreateJob` yet), and idempotency across genuinely distinct `external_job_uid` retries with a *different* `org_uid` (e.g. an upstream caller that regenerates `org_uid` per attempt) — that case would need dedupe on `external_job_uid` too, e.g. via a unique constraint and a `Filter`/service-level lookup by that column as well.
 
 ## 7. Observability
 
@@ -62,7 +64,7 @@ In both cases the domain layer (entities, DTOs, controllers, mock external clien
 
 ## 8. Security / tenancy
 
-- Extract `createdBy` from an authenticated principal, not the request body.
+- Extract `service_user_account` from an authenticated principal, not the request body.
 - Add tenancy — every job carries a `tenantId`; every repository query filters by it; a `JobNotFoundException` is returned when tenants don't match (never a 403, to avoid leaking existence).
 - Rate limit `POST /organizations` per tenant.
 

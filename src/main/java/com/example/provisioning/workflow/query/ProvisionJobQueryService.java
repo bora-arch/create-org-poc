@@ -44,6 +44,8 @@ public class ProvisionJobQueryService {
 
         return new ProvisionJobResponse(
             job.getId(),
+            job.getOrgUid(),
+            job.getExternalJobUid(),
             job.getStatus(),
             currentStep,
             progress,

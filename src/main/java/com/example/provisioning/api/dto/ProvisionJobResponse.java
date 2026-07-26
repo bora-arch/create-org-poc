@@ -14,6 +14,14 @@ public record ProvisionJobResponse(
     @Schema(description = "Provisioning job id", example = "8b1b2f2c-4a11-4e7a-9c6b-7a1c3b2a0e11")
     UUID jobId,
 
+    @Schema(description = "Client-supplied organization identifier from the request; "
+        + "also the retry key", example = "3f2a9c14-7b41-4e2a-9c31-8a2f6d1eb7d2")
+    String orgUid,
+
+    @Schema(description = "Caller-supplied job identifier, echoed back from the request",
+        example = "external_job_uid")
+    String externalJobUid,
+
     @Schema(description = "Overall workflow status", example = "IN_PROGRESS")
     WorkflowStatus status,
 

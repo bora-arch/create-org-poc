@@ -13,10 +13,14 @@ import org.springframework.stereotype.Component;
 public class StepFailureTranslator {
 
     private static final String INTERNAL_ERROR = "INTERNAL_ERROR";
+    private static final String VALIDATION_FAILED = "VALIDATION_FAILED";
 
     public StepFailure translate(Throwable throwable) {
         if (throwable instanceof ExternalCallException ex) {
             return new StepFailure(ex.getErrorCode(), truncate(ex.getMessage()));
+        }
+        if (throwable instanceof RequestValidationException ex) {
+            return new StepFailure(VALIDATION_FAILED, truncate(ex.getMessage()));
         }
         String message = throwable.getMessage();
         return new StepFailure(INTERNAL_ERROR,

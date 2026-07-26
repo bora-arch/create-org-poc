@@ -1,7 +1,6 @@
 package com.example.provisioning.workflow.engine;
 
 import com.example.provisioning.config.AsyncConfig;
-import com.example.provisioning.domain.model.OrgType;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Async;
@@ -26,10 +25,10 @@ public class ProvisionWorkflowAsyncRunner {
     private final ProvisionWorkflowService workflowService;
 
     @Async(AsyncConfig.PROVISIONING_EXECUTOR)
-    public void run(UUID jobId, String organizationName, String createdBy,
-                    OrgType orgType) {
+    public void run(UUID jobId, String rawOrgUid, String serviceUserAccount,
+                    String externalJobUid, int resumeFromOrder) {
         try {
-            workflowService.execute(jobId, organizationName, createdBy, orgType);
+            workflowService.execute(jobId, rawOrgUid, serviceUserAccount, externalJobUid, resumeFromOrder);
         } catch (RuntimeException ex) {
             log.error("Provisioning job {} failed catastrophically", jobId, ex);
         }

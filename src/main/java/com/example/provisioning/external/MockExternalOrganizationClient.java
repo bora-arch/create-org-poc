@@ -32,11 +32,9 @@ public class MockExternalOrganizationClient implements ExternalOrganizationClien
     );
 
     @Override
-    public UUID createOrgInFsp(String name) {
+    public void createOrgInFsp(UUID orgUid) {
         maybeFail("createOrgInFsp");
-        UUID id = UUID.randomUUID();
-        log.debug("createOrgInFsp name={} -> id={}", name, id);
-        return id;
+        log.debug("createOrgInFsp orgUid={}", orgUid);
     }
 
     @Override
