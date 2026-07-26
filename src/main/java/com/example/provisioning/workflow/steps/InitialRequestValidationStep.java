@@ -11,7 +11,6 @@ import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Locale;
 import java.util.Set;
 import java.util.UUID;
 import java.util.regex.Pattern;
@@ -81,24 +80,12 @@ public class InitialRequestValidationStep implements ProvisionStep {
     }
 
     private OrgType resolveOrgType(String rawOrgType, List<String> violations) {
-        OrgType resolved = mapOrgType(rawOrgType);
-        if (resolved == null) {
-            violations.add("org_type must be one of: standard, internal, enterprise");
-        }
-        return resolved;
-    }
-
-    private OrgType mapOrgType(String rawOrgType) {
-        if (rawOrgType == null) {
+        try {
+            return OrgType.valueOf(rawOrgType);
+        } catch (IllegalArgumentException e) {
+            violations.add("org_type must be one of: STANDARD, INTERNAL, ENTERPRISE");
             return null;
         }
-        String normalized = rawOrgType.trim().toLowerCase(Locale.ROOT);
-        return switch (normalized) {
-            case "standard" -> OrgType.STANDARD;
-            case "internal" -> OrgType.INTERNAL;
-            case "enterprise" -> OrgType.ENTERPRISE;
-            default -> null;
-        };
     }
 
     private boolean isValidEmail(String value) {

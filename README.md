@@ -42,10 +42,10 @@ Covers registry uniqueness, exception translation, and an end-to-end `MockMvc` i
 ```bash
 curl -sS -X POST http://localhost:8080/organizations \
   -H 'content-type: application/json' \
-  -d '{"org_uid":"3f2a9c14-7b41-4e2a-9c31-8a2f6d1eb7d2","org_type":"standard","service_user_account":"sav20006@gmail.com","external_job_uid":"ext-job-482"}'
+  -d '{"org_uid":"3f2a9c14-7b41-4e2a-9c31-8a2f6d1eb7d2","org_type":"STANDARD","service_user_account":"sav20006@gmail.com","external_job_uid":"ext-job-482"}'
 ```
 
-All four fields are required. `org_type` is one of `standard` \| `internal` \| `enterprise` — it selects a profile in `default_config.json` that decides which steps run and which are recorded `SKIPPED`. `org_uid` is also the **idempotency/retry key**: resubmitting the same request body (or a corrected one) after a failure resumes that job at its failed step instead of creating a new one — see [Retrying a failed job](#retrying-a-failed-job).
+All four fields are required. `org_type` must exactly match one of the `OrgType` enum constants: `STANDARD` \| `INTERNAL` \| `ENTERPRISE` — it selects a profile in `default_config.json` that decides which steps run and which are recorded `SKIPPED`. `org_uid` is also the **idempotency/retry key**: resubmitting the same request body (or a corrected one) after a failure resumes that job at its failed step instead of creating a new one — see [Retrying a failed job](#retrying-a-failed-job).
 
 `INITIAL_REQUEST_VALIDATION` always runs first, and runs **synchronously** on the request thread — format/semantic errors (e.g. `org_uid` isn't a UUID, `org_type` isn't recognized) never start the async workflow; the call returns immediately with `status: FAILED` and the validation error (see below). A structurally invalid request (a required field missing/blank) still gets a plain `400` (see [API docs](#api-docs-openapi--swagger)).
 
@@ -139,7 +139,7 @@ corrected fields if the failure was a validation error):
 ```bash
 curl -sS -X POST http://localhost:8080/organizations \
   -H 'content-type: application/json' \
-  -d '{"org_uid":"3f2a9c14-7b41-4e2a-9c31-8a2f6d1eb7d2","org_type":"standard","service_user_account":"sav20006@gmail.com","external_job_uid":"ext-job-482"}'
+  -d '{"org_uid":"3f2a9c14-7b41-4e2a-9c31-8a2f6d1eb7d2","org_type":"STANDARD","service_user_account":"sav20006@gmail.com","external_job_uid":"ext-job-482"}'
 ```
 
 The workflow **resumes at the failed step** — steps that already
@@ -161,16 +161,16 @@ overriding `boolean shouldRun(ProvisionContext)` on `ProvisionStep`
 and never fails the job.
 
 **What drives the skip: the org type's config profile.** The request's
-`org_type` (`standard` \| `internal` \| `enterprise`) is resolved by
-`INITIAL_REQUEST_VALIDATION` into an `OrgType` (`standard` → `STANDARD`),
-which selects a profile in
-[`default_config.json`](src/main/resources/default_config.json) (keyed
-by the internal enum names `STANDARD`/`INTERNAL`/`ENTERPRISE`), listing
-the enabled config *sections* for that tier. Each conditional step
-checks its section via `context.hasSection(...)` — a missing section
-means the step is skipped:
+`org_type` must exactly match one of the `OrgType` enum constants —
+`STANDARD` \| `INTERNAL` \| `ENTERPRISE` — validated by
+`INITIAL_REQUEST_VALIDATION` via `OrgType.valueOf(...)` (no case-insensitive
+or alias mapping). It selects a profile in
+[`default_config.json`](src/main/resources/default_config.json) (keyed by
+those same enum names), listing the enabled config *sections* for that
+tier. Each conditional step checks its section via
+`context.hasSection(...)` — a missing section means the step is skipped:
 
-| Step | Section (`ConfigSections`) | standard | internal | enterprise |
+| Step | Section (`ConfigSections`) | STANDARD | INTERNAL | ENTERPRISE |
 |------|----------------------------|:----:|:--------:|:----------:|
 | `ASSIGN_FSP_RECOMMENDATION_MODELS`       | `recommendation_models`   | skip | skip | run |
 | `SETUP_DEFAULT_BRANDING_PRM_PREFERENCES` | `branding`                | run  | skip | run |

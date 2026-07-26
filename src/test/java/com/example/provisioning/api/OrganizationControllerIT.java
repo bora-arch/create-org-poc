@@ -39,7 +39,7 @@ class OrganizationControllerIT {
     @Autowired ObjectMapper objectMapper;
     @Autowired FlakyOncePrmPreferencesClient client;
 
-    // "standard" (the default org type) enables branding, rfs_ui, citations,
+    // "STANDARD" (the default org type) enables branding, rfs_ui, citations,
     // and license — so ASSIGN_FSP_RECOMMENDATION_MODELS, DISABLE_PRM_LICENSES,
     // and SETUP_FSP_BOOSTERS are skipped.
     private static final Set<String> STANDARD_SKIPPED = Set.of(
@@ -54,7 +54,7 @@ class OrganizationControllerIT {
 
     @Test
     void standardOrgType_skipsRecommendationDisableAndBoosters() throws Exception {
-        JsonNode accepted = postOrganization(requestJson(newOrgUid(), "standard", "sav20006@gmail.com", "ext-1"));
+        JsonNode accepted = postOrganization(requestJson(newOrgUid(), "STANDARD", "sav20006@gmail.com", "ext-1"));
         UUID jobId = UUID.fromString(accepted.get("jobId").asText());
 
         awaitSuccessWithSkips(jobId, STANDARD_SKIPPED);
@@ -62,7 +62,7 @@ class OrganizationControllerIT {
 
     @Test
     void internalOrgType_skipsAllExternalSectionsAndRunsDisableLicenses() throws Exception {
-        JsonNode accepted = postOrganization(requestJson(newOrgUid(), "internal", "sav20006@gmail.com", "ext-2"));
+        JsonNode accepted = postOrganization(requestJson(newOrgUid(), "INTERNAL", "sav20006@gmail.com", "ext-2"));
         UUID jobId = UUID.fromString(accepted.get("jobId").asText());
 
         awaitSuccessWithSkips(jobId, INTERNAL_SKIPPED);
@@ -70,7 +70,7 @@ class OrganizationControllerIT {
 
     @Test
     void enterpriseOrgType_runsAllExceptDisableLicenses() throws Exception {
-        JsonNode accepted = postOrganization(requestJson(newOrgUid(), "enterprise", "sav20006@gmail.com", "ext-3"));
+        JsonNode accepted = postOrganization(requestJson(newOrgUid(), "ENTERPRISE", "sav20006@gmail.com", "ext-3"));
         UUID jobId = UUID.fromString(accepted.get("jobId").asText());
 
         awaitSuccessWithSkips(jobId, Set.of("DISABLE_PRM_LICENSES"));
@@ -80,7 +80,7 @@ class OrganizationControllerIT {
     void invalidOrgUid_isRejectedSynchronouslyWithFirstStepFailed() throws Exception {
         MvcResult result = mockMvc.perform(post("/organizations")
                 .contentType(APPLICATION_JSON)
-                .content(requestJson("not-a-uuid", "standard", "sav20006@gmail.com", "ext-4")))
+                .content(requestJson("not-a-uuid", "STANDARD", "sav20006@gmail.com", "ext-4")))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.status").value("FAILED"))
             .andExpect(jsonPath("$.externalJobUid").value("ext-4"))
@@ -127,7 +127,7 @@ class OrganizationControllerIT {
     void retryWithSameOrgUid_resumesFromFailedStepInsteadOfRestarting() throws Exception {
         client.armFailureOnce();
         String orgUid = newOrgUid();
-        String body = requestJson(orgUid, "standard", "sav20006@gmail.com", "ext-retry");
+        String body = requestJson(orgUid, "STANDARD", "sav20006@gmail.com", "ext-retry");
 
         JsonNode firstResponse = postOrganization(body);
         UUID jobId = UUID.fromString(firstResponse.get("jobId").asText());
