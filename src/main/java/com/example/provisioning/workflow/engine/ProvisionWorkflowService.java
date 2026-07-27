@@ -39,6 +39,16 @@ import java.util.UUID;
  * halts the loop and leaves remaining steps {@code NOT_STARTED}. A
  * retry (same {@code org_uid}, job status {@code FAILED}) resumes at
  * the first non-terminal step instead of restarting the whole job.
+ *
+ * <p>Only {@code INITIAL_REQUEST_VALIDATION} is pre-seeded at job
+ * creation — {@code source} (and therefore which other steps even
+ * apply) isn't known yet. Once validation resolves {@code source},
+ * {@link #validateSynchronously} seeds exactly the steps
+ * {@link SourceStepConfigProvider#stepsFor} selects, in catalog order.
+ * A step outside that set never gets a row at all — it never appears
+ * in {@code GET}/{@code POST} responses, rather than showing up as
+ * {@code SKIPPED} — so the step list reported to a caller only ever
+ * contains steps actually configured for that {@code source}.
  */
 @Service
 @RequiredArgsConstructor
@@ -65,7 +75,9 @@ public class ProvisionWorkflowService {
      * validation; once later steps have run under a given org type /
      * source, changing either mid-flight would desync which steps were
      * actually gated by which rules. If not found, persists a new job
-     * with all steps pre-seeded as {@link StepStatus#NOT_STARTED}.
+     * with only {@code INITIAL_REQUEST_VALIDATION} pre-seeded as
+     * {@link StepStatus#NOT_STARTED} — the rest are seeded once
+     * {@code source} is resolved, see {@link #validateSynchronously}.
      */
     @Transactional
     public OrganizationProvisionJob findOrCreateJob(String orgUid, String serviceUserAccount,
@@ -103,6 +115,11 @@ public class ProvisionWorkflowService {
      * failed validation — in which case the job is already marked
      * FAILED and the caller should respond with the current job state
      * rather than starting async execution.
+     *
+     * <p>On success, seeds the step rows for exactly the steps
+     * {@code source} selects (see {@link #seedStepsForSource}) — this
+     * runs exactly once per job, since a job never re-enters this
+     * method once {@code INITIAL_REQUEST_VALIDATION} has succeeded.
      */
     public boolean validateSynchronously(UUID jobId, String rawOrgUid, String rawOrgType,
                                          String rawSource, String serviceUserAccount,
@@ -116,6 +133,7 @@ public class ProvisionWorkflowService {
         try {
             stepExecutor.execute(jobId, validationStep, context);
             jobStateWriter.markValidationResolved(jobId, context.getOrgType(), rawSource);
+            seedStepsForSource(jobId, context.getEnabledSteps());
             return true;
         } catch (StepExecutionException halt) {
             jobStateWriter.markFinished(jobId, WorkflowStatus.FAILED);
@@ -143,12 +161,14 @@ public class ProvisionWorkflowService {
      * or a previous one), so the job's {@code orgType} / {@code source}
      * are guaranteed resolved.
      *
-     * <p>A step runs only if it is both selected by {@code source}
-     * ({@link ProvisionContext#isStepEnabledForSource}) and applicable
-     * per its own {@link ProvisionStep#shouldRun} (org-type gating) —
-     * either gate failing records the step {@code SKIPPED} at its
-     * normal catalog position, so relative execution order among the
-     * steps that do run is unaffected by source restricting the set.
+     * <p>A step outside {@code source}'s selection has no row at all
+     * (see {@link #seedStepsForSource}) — it's silently skipped over in
+     * this loop, not touched via {@link StepExecutor}. A step that
+     * {@code source} did select still only runs if it is also
+     * applicable per its own {@link ProvisionStep#shouldRun} (org-type
+     * gating); failing that records it {@code SKIPPED}. Either way,
+     * relative execution order among the steps that do run is
+     * unaffected by source restricting the set.
      */
     public void execute(UUID jobId, String rawOrgUid, String serviceUserAccount,
                         String externalJobUid, int resumeFromOrder) {
@@ -170,11 +190,10 @@ public class ProvisionWorkflowService {
         List<ProvisionStep> steps = stepRegistry.ordered();
         try {
             for (ProvisionStep step : steps) {
-                if (step.order() < resumeFromOrder) {
+                if (step.order() < resumeFromOrder || !context.isStepEnabledForSource(step.name())) {
                     continue;
                 }
-                boolean applies = context.isStepEnabledForSource(step.name()) && step.shouldRun(context);
-                if (!applies) {
+                if (!step.shouldRun(context)) {
                     stepExecutor.skip(jobId, step);
                     continue;
                 }
@@ -203,23 +222,40 @@ public class ProvisionWorkflowService {
             .status(WorkflowStatus.PENDING)
             .build();
         workflowRepository.save(job);
-        seedSteps(jobId);
+        seedStepRow(jobId, validationStep());
         log.info("Created provisioning job {} for org_uid '{}'", jobId, orgUid);
         return job;
     }
 
-    private void seedSteps(UUID jobId) {
-        List<ProvisionStep> steps = stepRegistry.ordered();
-        List<OrganizationProvisionStep> rows = steps.stream()
-            .map(step -> OrganizationProvisionStep.builder()
-                .id(UUID.randomUUID())
-                .jobId(jobId)
-                .stepOrder(step.order())
-                .stepName(step.name())
-                .status(StepStatus.NOT_STARTED)
-                .build())
+    /**
+     * Seeds one {@link StepStatus#NOT_STARTED} row per catalog step
+     * that {@code enabledSteps} selects (in catalog order), skipping
+     * {@code INITIAL_REQUEST_VALIDATION} itself — already seeded by
+     * {@link #createJob}. Steps outside {@code enabledSteps} never get
+     * a row at all: they are absent from every response for this job,
+     * not reported as {@code SKIPPED}.
+     */
+    private void seedStepsForSource(UUID jobId, Set<StepName> enabledSteps) {
+        List<OrganizationProvisionStep> rows = stepRegistry.ordered().stream()
+            .filter(step -> step.name() != StepName.INITIAL_REQUEST_VALIDATION)
+            .filter(step -> enabledSteps.contains(step.name()))
+            .map(step -> newStepRow(jobId, step))
             .toList();
         stepRepository.saveAll(rows);
+    }
+
+    private void seedStepRow(UUID jobId, ProvisionStep step) {
+        stepRepository.save(newStepRow(jobId, step));
+    }
+
+    private OrganizationProvisionStep newStepRow(UUID jobId, ProvisionStep step) {
+        return OrganizationProvisionStep.builder()
+            .id(UUID.randomUUID())
+            .jobId(jobId)
+            .stepOrder(step.order())
+            .stepName(step.name())
+            .status(StepStatus.NOT_STARTED)
+            .build();
     }
 
     private ProvisionStep validationStep() {

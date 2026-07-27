@@ -1,26 +1,16 @@
 {
-  "_comment": "source=ETL_JOB restricts execution to CREATE_ORG_IN_FSP and ENABLE_PRM_LICENSES (plus the always-first INITIAL_REQUEST_VALIDATION) per source_config.json — every other step is SKIPPED regardless of org_type, and the ones that do run keep their normal catalog order/position.",
+  "_comment": "source=ETL_JOB restricts the step catalog itself, at seed time, to CREATE_ORG_IN_FSP and ENABLE_PRM_LICENSES (plus the always-first INITIAL_REQUEST_VALIDATION) per source_config.json. Steps outside that set never get a row at all — they are absent from 'steps' entirely, not reported SKIPPED. progress/totalSteps only ever count the steps actually configured for this source (3, not 13). The steps that do run keep their normal catalog order relative to each other.",
   "jobId": "8b1b2f2c-4a11-4e7a-9c6b-7a1c3b2a0e11",
   "orgUid": "3f2a9c14-7b41-4e2a-9c31-8a2f6d1eb7d2",
   "externalJobUid": "ext-job-etl-1",
   "source": "ETL_JOB",
   "status": "SUCCESS",
   "currentStep": "ENABLE_PRM_LICENSES",
-  "progress": 13,
-  "totalSteps": 13,
+  "progress": 3,
+  "totalSteps": 3,
   "steps": [
-    { "name": "INITIAL_REQUEST_VALIDATION",             "status": "SUCCESS" },
-    { "name": "CREATE_ORG_IN_FSP",                      "status": "SUCCESS" },
-    { "name": "SETUP_ORG_IN_FSP",                       "status": "SKIPPED" },
-    { "name": "ASSIGN_FSP_RECOMMENDATION_MODELS",       "status": "SKIPPED" },
-    { "name": "SETUP_DEFAULT_BRANDING_PRM_PREFERENCES", "status": "SKIPPED" },
-    { "name": "SETUP_DEFAULT_PRM_PREFERENCES",          "status": "SKIPPED" },
-    { "name": "SETUP_DEFAULT_RFS_UI_PRM_PREFERENCES",   "status": "SKIPPED" },
-    { "name": "SETUP_DEFAULT_VOCABULARIES_IN_CE",       "status": "SKIPPED" },
-    { "name": "SETUP_DEFAULT_DATASOURCES_IN_FSP",       "status": "SKIPPED" },
-    { "name": "SETUP_DEFAULT_CITATIONS",                "status": "SKIPPED" },
-    { "name": "ENABLE_PRM_LICENSES",                    "status": "SUCCESS" },
-    { "name": "DISABLE_PRM_LICENSES",                   "status": "SKIPPED" },
-    { "name": "SETUP_FSP_BOOSTERS",                     "status": "SKIPPED" }
+    { "name": "INITIAL_REQUEST_VALIDATION", "status": "SUCCESS" },
+    { "name": "CREATE_ORG_IN_FSP",          "status": "SUCCESS" },
+    { "name": "ENABLE_PRM_LICENSES",        "status": "SUCCESS" }
   ]
 }

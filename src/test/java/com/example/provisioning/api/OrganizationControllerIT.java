@@ -81,43 +81,35 @@ class OrganizationControllerIT {
     }
 
     @Test
-    void etlJobSource_runsOnlyValidationCreateOrgAndEnableLicenses() throws Exception {
+    void etlJobSource_stepListContainsOnlyValidationCreateOrgAndEnableLicenses() throws Exception {
         JsonNode accepted = postOrganization(
             requestJson(newOrgUid(), "STANDARD", "ETL_JOB", "sav20006@gmail.com", "ext-etl"));
         UUID jobId = UUID.fromString(accepted.get("jobId").asText());
 
         JsonNode state = awaitStatus(jobId, "SUCCESS");
-        assertThat(state.get("progress").asInt()).isEqualTo(13);
+        // Steps not configured for this source have no row at all — they
+        // are absent from the list entirely, not reported SKIPPED.
+        assertThat(state.get("steps")).hasSize(3);
+        assertThat(state.get("progress").asInt()).isEqualTo(3);
+        assertThat(state.get("totalSteps").asInt()).isEqualTo(3);
         assertThat(findStep(state, "INITIAL_REQUEST_VALIDATION").get("status").asText()).isEqualTo("SUCCESS");
         assertThat(findStep(state, "CREATE_ORG_IN_FSP").get("status").asText()).isEqualTo("SUCCESS");
         assertThat(findStep(state, "ENABLE_PRM_LICENSES").get("status").asText()).isEqualTo("SUCCESS");
-        Set<String> skippedBySource = Set.of("SETUP_ORG_IN_FSP", "ASSIGN_FSP_RECOMMENDATION_MODELS",
-            "SETUP_DEFAULT_BRANDING_PRM_PREFERENCES", "SETUP_DEFAULT_PRM_PREFERENCES",
-            "SETUP_DEFAULT_RFS_UI_PRM_PREFERENCES", "SETUP_DEFAULT_VOCABULARIES_IN_CE",
-            "SETUP_DEFAULT_DATASOURCES_IN_FSP", "SETUP_DEFAULT_CITATIONS", "DISABLE_PRM_LICENSES",
-            "SETUP_FSP_BOOSTERS");
-        skippedBySource.forEach(name ->
-            assertThat(findStep(state, name).get("status").asText()).as("step %s", name).isEqualTo("SKIPPED"));
     }
 
     @Test
-    void adminAppSource_runsOnlyValidationCreateOrgAndVocabularies() throws Exception {
+    void adminAppSource_stepListContainsOnlyValidationCreateOrgAndVocabularies() throws Exception {
         JsonNode accepted = postOrganization(
             requestJson(newOrgUid(), "STANDARD", "ADMIN_APP", "sav20006@gmail.com", "ext-admin"));
         UUID jobId = UUID.fromString(accepted.get("jobId").asText());
 
         JsonNode state = awaitStatus(jobId, "SUCCESS");
-        assertThat(state.get("progress").asInt()).isEqualTo(13);
+        assertThat(state.get("steps")).hasSize(3);
+        assertThat(state.get("progress").asInt()).isEqualTo(3);
+        assertThat(state.get("totalSteps").asInt()).isEqualTo(3);
         assertThat(findStep(state, "INITIAL_REQUEST_VALIDATION").get("status").asText()).isEqualTo("SUCCESS");
         assertThat(findStep(state, "CREATE_ORG_IN_FSP").get("status").asText()).isEqualTo("SUCCESS");
         assertThat(findStep(state, "SETUP_DEFAULT_VOCABULARIES_IN_CE").get("status").asText()).isEqualTo("SUCCESS");
-        Set<String> skippedBySource = Set.of("SETUP_ORG_IN_FSP", "ASSIGN_FSP_RECOMMENDATION_MODELS",
-            "SETUP_DEFAULT_BRANDING_PRM_PREFERENCES", "SETUP_DEFAULT_PRM_PREFERENCES",
-            "SETUP_DEFAULT_RFS_UI_PRM_PREFERENCES", "SETUP_DEFAULT_DATASOURCES_IN_FSP",
-            "SETUP_DEFAULT_CITATIONS", "ENABLE_PRM_LICENSES", "DISABLE_PRM_LICENSES",
-            "SETUP_FSP_BOOSTERS");
-        skippedBySource.forEach(name ->
-            assertThat(findStep(state, name).get("status").asText()).as("step %s", name).isEqualTo("SKIPPED"));
     }
 
     @Test
@@ -128,22 +120,12 @@ class OrganizationControllerIT {
 
         JsonNode state = awaitStatus(jobId, "SUCCESS");
         // ENABLE_PRM_LICENSES (catalog order 100) must still appear after
-        // CREATE_ORG_IN_FSP (order 10) even though everything in between
-        // was skipped for this source — source restricts the set, it does
-        // not reorder it.
+        // CREATE_ORG_IN_FSP (order 10), and only these three steps at all —
+        // source restricts the set, it does not reorder it, and steps
+        // outside the set aren't merely skipped, they're absent.
         java.util.List<String> names = new java.util.ArrayList<>();
         state.get("steps").forEach(s -> names.add(s.get("name").asText()));
-        assertThat(names.indexOf("CREATE_ORG_IN_FSP")).isLessThan(names.indexOf("ENABLE_PRM_LICENSES"));
-        assertThat(names).containsExactlyElementsOf(
-            java.util.stream.Stream.concat(
-                java.util.stream.Stream.of("INITIAL_REQUEST_VALIDATION"),
-                java.util.stream.Stream.of("CREATE_ORG_IN_FSP", "SETUP_ORG_IN_FSP",
-                    "ASSIGN_FSP_RECOMMENDATION_MODELS", "SETUP_DEFAULT_BRANDING_PRM_PREFERENCES",
-                    "SETUP_DEFAULT_PRM_PREFERENCES", "SETUP_DEFAULT_RFS_UI_PRM_PREFERENCES",
-                    "SETUP_DEFAULT_VOCABULARIES_IN_CE", "SETUP_DEFAULT_DATASOURCES_IN_FSP",
-                    "SETUP_DEFAULT_CITATIONS", "ENABLE_PRM_LICENSES", "DISABLE_PRM_LICENSES",
-                    "SETUP_FSP_BOOSTERS")
-            ).toList());
+        assertThat(names).containsExactly("INITIAL_REQUEST_VALIDATION", "CREATE_ORG_IN_FSP", "ENABLE_PRM_LICENSES");
     }
 
     @Test
@@ -157,10 +139,14 @@ class OrganizationControllerIT {
             .andExpect(jsonPath("$.steps[0].name").value("INITIAL_REQUEST_VALIDATION"))
             .andExpect(jsonPath("$.steps[0].status").value("FAILED"))
             .andExpect(jsonPath("$.steps[0].errorCode").value("VALIDATION_FAILED"))
-            .andExpect(jsonPath("$.steps[1].status").value("NOT_STARTED"))
             .andReturn();
 
         JsonNode body = objectMapper.readTree(result.getResponse().getContentAsString());
+        // source was never resolved (validation failed before it could be),
+        // so no other step rows exist at all — not even NOT_STARTED ones.
+        assertThat(body.get("steps")).hasSize(1);
+        assertThat(body.get("progress").asInt()).isEqualTo(1);
+        assertThat(body.get("totalSteps").asInt()).isEqualTo(1);
         assertThat(body.get("steps").get(0).get("errorMessage").asText())
             .contains("org_uid must be a valid UUID");
     }

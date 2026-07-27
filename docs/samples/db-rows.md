@@ -37,9 +37,28 @@ retry (`ProvisionWorkflowService.findOrCreateJob` only refreshes
 can't desync mid-flight from a request that later changes org type or
 source.
 
-A job created with, say, `source = "ETL_JOB"` instead would have most
-of the rows below `SKIPPED` — only `CREATE_ORG_IN_FSP` and
-`ENABLE_PRM_LICENSES` are in that source's allow-list — see
+**`source = "DEFAULT"` is what makes the 13-row table below meaningful
+as an org-type-gating example** — `DEFAULT`'s profile in
+`source_config.json` lists all 12 non-validation steps, so every one
+of them gets a row and org-type gating (`SKIPPED` vs. `SUCCESS`) is
+the only thing distinguishing them.
+
+A job created with `source = "ETL_JOB"` instead would **not** have 13
+rows with most of them `SKIPPED` — it would have exactly **3** rows,
+period, because `seedStepsForSource` only ever inserts a row for a
+step in the source's allow-list (`CREATE_ORG_IN_FSP` and
+`ENABLE_PRM_LICENSES`, plus the always-seeded
+`INITIAL_REQUEST_VALIDATION`):
+
+| id | job_id | step_order | step_name | status |
+|----|--------|-----------:|-----------|--------|
+| …-0000 | (etl job id) |   0 | INITIAL_REQUEST_VALIDATION | SUCCESS |
+| …-0001 | (etl job id) |  10 | CREATE_ORG_IN_FSP          | SUCCESS |
+| …-0002 | (etl job id) | 100 | ENABLE_PRM_LICENSES        | SUCCESS |
+
+No row for `step_order` 20, 30, 40, … ever exists for this job — not
+`SKIPPED`, not `NOT_STARTED`, nothing. `GET`/`POST` responses for it
+report `totalSteps: 3`, never `13`. See
 [`GET-job-source-restricted.json`](GET-job-source-restricted.json).
 
 ## `organization_provision_step`

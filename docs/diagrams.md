@@ -98,6 +98,7 @@ classDiagram
         +validateSynchronously(jobId, rawOrgUid, rawOrgType, rawSource, serviceUserAccount, externalJobUid) boolean
         +markResuming(jobId) void
         +execute(jobId, rawOrgUid, serviceUserAccount, externalJobUid, resumeFromOrder) void
+        -seedStepsForSource(jobId, enabledSteps) void
     }
 
     class ProvisionWorkflowAsyncRunner {
@@ -189,7 +190,8 @@ sequenceDiagram
     Client->>OC: POST /organizations {org_uid, org_type, source, service_user_account, external_job_uid}
     OC->>WS: findOrCreateJob(orgUid, serviceUserAccount, externalJobUid)
     WS->>DB: INSERT job (PENDING)
-    WS->>DB: INSERT 13 step rows (NOT_STARTED)
+    WS->>DB: INSERT 1 step row: INITIAL_REQUEST_VALIDATION (NOT_STARTED)
+    Note over WS,DB: source isn't resolved yet — nothing else can be seeded
     WS-->>OC: job (id, status=PENDING)
     OC->>WS: firstPendingStepOrder(jobId)
     WS-->>OC: 0 (INITIAL_REQUEST_VALIDATION)
@@ -198,12 +200,15 @@ sequenceDiagram
     WS->>DB: UPDATE job status=IN_PROGRESS
     WS->>DB: UPDATE step INITIAL_REQUEST_VALIDATION status=SUCCESS
     WS->>DB: UPDATE job orgType=STANDARD, source=DEFAULT (markValidationResolved)
+    WS->>WS: enabledSteps = SourceStepConfigProvider.stepsFor("DEFAULT")<br/>= all 12 non-validation steps
+    WS->>DB: INSERT 12 step rows for enabledSteps (NOT_STARTED)
+    Note over WS,DB: seedStepsForSource — for source=ETL_JOB this would insert only 2 rows, not 12
     WS-->>OC: true (valid)
     OC->>WS: firstPendingStepOrder(jobId)
     WS-->>OC: 10 (CREATE_ORG_IN_FSP)
     OC->>WS: markResuming(jobId)
     OC->>AR: run(jobId, orgUid, serviceUserAccount, externalJobUid, resumeFromOrder=10)
-    OC-->>Client: 202 { jobId, orgUid, externalJobUid, source, status: IN_PROGRESS, progress: 1 }
+    OC-->>Client: 202 { jobId, orgUid, externalJobUid, source, status: IN_PROGRESS, progress: 1, totalSteps: 13 }
 
     Note over AR,DB: async — provisioning-N thread pool
 
@@ -212,24 +217,28 @@ sequenceDiagram
     WS->>WS: enabledSections = DefaultConfigProvider.sectionsFor(orgType)<br/>enabledSteps = SourceStepConfigProvider.stepsFor(source)
     WS->>DB: UPDATE job status=IN_PROGRESS
     loop each step in registry.ordered() with order >= resumeFromOrder
-        alt !isStepEnabledForSource(step) OR !step.shouldRun(ctx)
-            WS->>SE: skip(jobId, step)
-            SE->>DB: UPDATE step status=SKIPPED, finishedAt
-        else selected by source AND applies to this org type
-            WS->>DB: UPDATE job currentStep=<name>
-            WS->>SE: execute(jobId, step, ctx)
-            SE->>DB: UPDATE step status=IN_PROGRESS, startedAt
-            SE->>Step: execute(ctx)
-            Step->>Ext: <method>()
-            Ext-->>Step: result
-            Step-->>SE: return
-            SE->>DB: UPDATE step status=SUCCESS, finishedAt, duration
+        alt !isStepEnabledForSource(step)
+            WS->>WS: continue — no row exists for this step, nothing to update
+        else selected by source
+            alt !step.shouldRun(ctx)
+                WS->>SE: skip(jobId, step)
+                SE->>DB: UPDATE step status=SKIPPED, finishedAt
+            else applies to this org type too
+                WS->>DB: UPDATE job currentStep=<name>
+                WS->>SE: execute(jobId, step, ctx)
+                SE->>DB: UPDATE step status=IN_PROGRESS, startedAt
+                SE->>Step: execute(ctx)
+                Step->>Ext: <method>()
+                Ext-->>Step: result
+                Step-->>SE: return
+                SE->>DB: UPDATE step status=SUCCESS, finishedAt, duration
+            end
         end
     end
     WS->>DB: UPDATE job status=SUCCESS, finishedAt
 
     Client->>OC: GET /organization-provision-jobs/{jobId}
-    OC-->>Client: 200 { status: SUCCESS, progress: 13, steps: [...] }
+    OC-->>Client: 200 { status: SUCCESS, progress: 13, totalSteps: 13, steps: [...13 entries...] }
 ```
 
 ## Sequence — failed workflow
@@ -256,7 +265,7 @@ sequenceDiagram
     Note over SE: @Transactional(REQUIRES_NEW, noRollbackFor=StepExecutionException) — the FAILED write survives the throw
     SE--x WS: StepExecutionException(ASSIGN_FSP_RECOMMENDATION_MODELS)
     WS->>DB: UPDATE job status=FAILED, finishedAt
-    Note over DB: SETUP_DEFAULT_BRANDING_PRM_PREFERENCES..SETUP_FSP_BOOSTERS remain NOT_STARTED (pre-seeded)
+    Note over DB: SETUP_DEFAULT_BRANDING_PRM_PREFERENCES..SETUP_FSP_BOOSTERS remain NOT_STARTED (pre-seeded) —<br/>this assumes source=DEFAULT (all steps seeded); a restricted source simply has fewer rows to leave NOT_STARTED
 ```
 
 ## Sequence — retry resumes at the failed step
@@ -338,7 +347,10 @@ stateDiagram-v2
     SKIPPED --> [*]
 ```
 
-A step is pre-seeded `NOT_STARTED`. When the orchestrator reaches it,
+A step is pre-seeded `NOT_STARTED` **only if `source` selected it** —
+see the seeding sequence below. Steps outside that set never enter
+this state machine at all; there's no row, so there's no status to
+report. For a seeded step, when the orchestrator reaches it,
 `ProvisionStep.shouldRun(context)` decides the branch: `true` → the
 step executes (`IN_PROGRESS` → `SUCCESS`/`FAILED`); `false` → the step
 is recorded `SKIPPED` and never invoked. `SKIPPED` is a terminal
@@ -389,44 +401,49 @@ sequenceDiagram
     Note over WS,DB: execute() never called for skipped steps — no external request
 ```
 
-## Sequence — source restricts the step set (SKIPPED)
+## Sequence — source restricts which steps are even seeded
 
-Orthogonal to the above: the request's `source` selects the fixed set
-of steps that caller may trigger at all
+Orthogonal to org-type gating above: the request's `source` selects
+the fixed set of steps that caller may trigger at all
 ([`source_config.json`](../src/main/resources/source_config.json)),
-independent of `org_type`. Shown for `source = "ETL_JOB"`, whose
-profile only lists `CREATE_ORG_IN_FSP` and `ENABLE_PRM_LICENSES` —
-every other step is `SKIPPED` regardless of what its own `shouldRun`
-would say, and execution order among the steps that do run
-(`CREATE_ORG_IN_FSP` then, much later in the catalog,
-`ENABLE_PRM_LICENSES`) is unchanged.
+independent of `org_type` — and it does so at **seed time**, right
+after `INITIAL_REQUEST_VALIDATION` succeeds, not by marking excluded
+steps `SKIPPED` during execution. Shown for `source = "ETL_JOB"`,
+whose profile only lists `CREATE_ORG_IN_FSP` and `ENABLE_PRM_LICENSES`
+— every other step never gets a row at all, so it can never appear in
+a `GET`/`POST` response for this job, under any status. The two steps
+that *are* seeded keep their normal catalog order relative to each
+other (`ENABLE_PRM_LICENSES` still runs after `CREATE_ORG_IN_FSP`,
+despite everything between them in the catalog never existing for this
+job).
 
 ```mermaid
 sequenceDiagram
     autonumber
     participant WS as ProvisionWorkflowService
-    participant CTX as ProvisionContext
-    participant SE as StepExecutor
+    participant SRC as SourceStepConfigProvider
     participant DB as H2
+    participant SE as StepExecutor
 
-    Note over WS: enabledSteps = SourceStepConfigProvider.stepsFor("ETL_JOB")<br/>= {CREATE_ORG_IN_FSP, ENABLE_PRM_LICENSES}
+    Note over WS: right after INITIAL_REQUEST_VALIDATION succeeds (validateSynchronously)
+    WS->>SRC: stepsFor("ETL_JOB")
+    SRC-->>WS: {CREATE_ORG_IN_FSP, ENABLE_PRM_LICENSES}
+    WS->>WS: seedStepsForSource(jobId, enabledSteps)
+    loop registry.ordered() minus INITIAL_REQUEST_VALIDATION
+        alt step.name() in enabledSteps
+            WS->>DB: INSERT step row (NOT_STARTED)
+        else not selected by source
+            WS->>WS: skip — no row ever created for this step
+        end
+    end
+    Note over DB: only 3 rows exist for this job, ever:<br/>INITIAL_REQUEST_VALIDATION, CREATE_ORG_IN_FSP, ENABLE_PRM_LICENSES
 
-    WS->>CTX: isStepEnabledForSource(CREATE_ORG_IN_FSP)
-    CTX-->>WS: true
-    WS->>WS: step.shouldRun(ctx) → true (unconditional)
+    Note over WS,SE: later, during execute() — only seeded rows are ever touched
     WS->>SE: execute(jobId, CREATE_ORG_IN_FSP, ctx)
     SE->>DB: UPDATE step status=IN_PROGRESS → SUCCESS
-
-    WS->>CTX: isStepEnabledForSource(SETUP_ORG_IN_FSP)
-    CTX-->>WS: false
-    WS->>SE: skip(jobId, SETUP_ORG_IN_FSP)
-    SE->>DB: UPDATE step status=SKIPPED, finishedAt
-    Note over WS,DB: repeats for every other step not in enabledSteps —<br/>ASSIGN_FSP_RECOMMENDATION_MODELS, SETUP_DEFAULT_*, DISABLE_PRM_LICENSES, SETUP_FSP_BOOSTERS
-
-    WS->>CTX: isStepEnabledForSource(ENABLE_PRM_LICENSES)
-    CTX-->>WS: true
-    WS->>WS: step.shouldRun(ctx) → hasSection("license")
+    Note over WS: SETUP_ORG_IN_FSP, ASSIGN_FSP_RECOMMENDATION_MODELS, SETUP_DEFAULT_*, DISABLE_PRM_LICENSES,<br/>SETUP_FSP_BOOSTERS — never touched, no row exists, loop just continues past them
     WS->>SE: execute(jobId, ENABLE_PRM_LICENSES, ctx)
     SE->>DB: UPDATE step status=IN_PROGRESS → SUCCESS
-    Note over WS,DB: still runs after CREATE_ORG_IN_FSP in catalog order — source restricts the set, it never reorders it
+
+    Note over WS,DB: GET /organization-provision-jobs/{jobId} → steps: [INITIAL_REQUEST_VALIDATION, CREATE_ORG_IN_FSP, ENABLE_PRM_LICENSES], totalSteps: 3
 ```
