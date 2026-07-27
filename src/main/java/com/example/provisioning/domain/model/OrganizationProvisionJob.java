@@ -47,6 +47,18 @@ public class OrganizationProvisionJob {
     @Column(name = "external_job_uid", length = 255)
     private String externalJobUid;
 
+    /**
+     * Identifies the calling system ({@code source}, e.g. {@code ETL_JOB},
+     * {@code ADMIN_APP}). Selects the fixed set of steps that caller may
+     * trigger — see {@code source_config.json} /
+     * {@link com.example.provisioning.workflow.engine.SourceStepConfigProvider}.
+     * Null until {@code INITIAL_REQUEST_VALIDATION} succeeds — like
+     * {@code orgType}, the request's raw value may be unknown/invalid,
+     * so this column only ever holds a validated value.
+     */
+    @Column(name = "source", length = 64)
+    private String source;
+
     @Column(name = "service_user_account", length = 255)
     private String serviceUserAccount;
 

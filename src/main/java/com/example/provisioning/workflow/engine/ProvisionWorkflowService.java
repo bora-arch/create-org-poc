@@ -51,12 +51,21 @@ public class ProvisionWorkflowService {
     private final StepExecutor stepExecutor;
     private final JobStateWriter jobStateWriter;
     private final DefaultConfigProvider defaultConfigProvider;
+    private final SourceStepConfigProvider sourceStepConfigProvider;
 
     /**
      * Looks up the job for {@code orgUid}. If found, refreshes the
-     * mutable request fields (a retry may correct them) and returns it
-     * unchanged otherwise. If not found, persists a new job with all
-     * steps pre-seeded as {@link StepStatus#NOT_STARTED}.
+     * request fields that are safe to correct on a retry —
+     * {@code serviceUserAccount} / {@code externalJobUid} — and returns
+     * it. {@code orgType} and {@code source} are deliberately NOT
+     * refreshed here: they are only persisted once
+     * {@code INITIAL_REQUEST_VALIDATION} resolves them (see
+     * {@link JobStateWriter#markValidationResolved}), so a retry that
+     * changes them takes effect only while the job is still stuck at
+     * validation; once later steps have run under a given org type /
+     * source, changing either mid-flight would desync which steps were
+     * actually gated by which rules. If not found, persists a new job
+     * with all steps pre-seeded as {@link StepStatus#NOT_STARTED}.
      */
     @Transactional
     public OrganizationProvisionJob findOrCreateJob(String orgUid, String serviceUserAccount,
@@ -89,22 +98,24 @@ public class ProvisionWorkflowService {
     /**
      * Runs only {@code INITIAL_REQUEST_VALIDATION}, synchronously, on
      * the calling thread. Returns {@code true} if the request is valid
-     * (org type + config sections are now resolved and persisted onto
-     * the job), {@code false} if it failed validation — in which case
-     * the job is already marked FAILED and the caller should respond
-     * with the current job state rather than starting async execution.
+     * (org type, source, and their derived enabled sections/steps are
+     * now resolved and persisted onto the job), {@code false} if it
+     * failed validation — in which case the job is already marked
+     * FAILED and the caller should respond with the current job state
+     * rather than starting async execution.
      */
     public boolean validateSynchronously(UUID jobId, String rawOrgUid, String rawOrgType,
-                                         String serviceUserAccount, String externalJobUid) {
-        ProvisionContext context =
-            new ProvisionContext(jobId, rawOrgUid, rawOrgType, serviceUserAccount, externalJobUid);
+                                         String rawSource, String serviceUserAccount,
+                                         String externalJobUid) {
+        ProvisionContext context = new ProvisionContext(
+            jobId, rawOrgUid, rawOrgType, rawSource, serviceUserAccount, externalJobUid);
         ProvisionStep validationStep = validationStep();
 
         jobStateWriter.markStarted(jobId);
         jobStateWriter.markCurrentStep(jobId, validationStep.name());
         try {
             stepExecutor.execute(jobId, validationStep, context);
-            jobStateWriter.markOrgTypeResolved(jobId, context.getOrgType());
+            jobStateWriter.markValidationResolved(jobId, context.getOrgType(), rawSource);
             return true;
         } catch (StepExecutionException halt) {
             jobStateWriter.markFinished(jobId, WorkflowStatus.FAILED);
@@ -129,22 +140,31 @@ public class ProvisionWorkflowService {
      * onward. Steps with a lower order are left untouched — they are
      * already SUCCESS/SKIPPED from a prior attempt. Always called after
      * {@link #validateSynchronously} has already succeeded (in this run
-     * or a previous one), so the job's {@code orgType} is guaranteed
-     * resolved.
+     * or a previous one), so the job's {@code orgType} / {@code source}
+     * are guaranteed resolved.
+     *
+     * <p>A step runs only if it is both selected by {@code source}
+     * ({@link ProvisionContext#isStepEnabledForSource}) and applicable
+     * per its own {@link ProvisionStep#shouldRun} (org-type gating) —
+     * either gate failing records the step {@code SKIPPED} at its
+     * normal catalog position, so relative execution order among the
+     * steps that do run is unaffected by source restricting the set.
      */
     public void execute(UUID jobId, String rawOrgUid, String serviceUserAccount,
                         String externalJobUid, int resumeFromOrder) {
         OrganizationProvisionJob job = workflowRepository.findById(jobId)
             .orElseThrow(() -> new IllegalStateException("Job not found: " + jobId));
         OrgType orgType = job.getOrgType();
-        if (orgType == null) {
+        String source = job.getSource();
+        if (orgType == null || source == null) {
             throw new IllegalStateException(
-                "Job " + jobId + " has no resolved orgType; validation must succeed before execute()");
+                "Job " + jobId + " has no resolved orgType/source; validation must succeed before execute()");
         }
         Set<String> enabledSections = defaultConfigProvider.sectionsFor(orgType);
-        ProvisionContext context =
-            new ProvisionContext(jobId, rawOrgUid, orgType.name(), serviceUserAccount, externalJobUid);
-        context.markValidated(UUID.fromString(job.getOrgUid()), orgType, enabledSections);
+        Set<StepName> enabledSteps = sourceStepConfigProvider.stepsFor(source);
+        ProvisionContext context = new ProvisionContext(
+            jobId, rawOrgUid, orgType.name(), source, serviceUserAccount, externalJobUid);
+        context.markValidated(UUID.fromString(job.getOrgUid()), orgType, enabledSections, enabledSteps);
 
         jobStateWriter.markStarted(jobId);
         List<ProvisionStep> steps = stepRegistry.ordered();
@@ -153,7 +173,8 @@ public class ProvisionWorkflowService {
                 if (step.order() < resumeFromOrder) {
                     continue;
                 }
-                if (!step.shouldRun(context)) {
+                boolean applies = context.isStepEnabledForSource(step.name()) && step.shouldRun(context);
+                if (!applies) {
                     stepExecutor.skip(jobId, step);
                     continue;
                 }

@@ -1,5 +1,5 @@
 {
-  "_comment": "org_uid was not a valid UUID. INITIAL_REQUEST_VALIDATION ran synchronously on the request thread, so this is the direct POST /organizations response (HTTP 200) — the async workflow never started and steps 2-13 stay NOT_STARTED.",
+  "_comment": "org_uid was not a valid UUID. INITIAL_REQUEST_VALIDATION ran synchronously on the request thread, so this is the direct POST /organizations response (HTTP 200) — the async workflow never started and steps 2-13 stay NOT_STARTED. 'source' is omitted (null) because validation never resolved it.",
   "jobId": "8b1b2f2c-4a11-4e7a-9c6b-7a1c3b2a0e11",
   "orgUid": "not-a-uuid",
   "externalJobUid": "ext-job-482",

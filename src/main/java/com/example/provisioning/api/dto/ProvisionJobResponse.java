@@ -22,6 +22,11 @@ public record ProvisionJobResponse(
         example = "external_job_uid")
     String externalJobUid,
 
+    @Schema(description = "Calling system identified by the request; selects the fixed set of "
+        + "steps that were allowed to run at all, independent of orgType. Null until "
+        + "INITIAL_REQUEST_VALIDATION resolves it.", example = "DEFAULT")
+    String source,
+
     @Schema(description = "Overall workflow status", example = "IN_PROGRESS")
     WorkflowStatus status,
 

@@ -4,6 +4,7 @@ import com.example.provisioning.domain.model.OrgType;
 import com.example.provisioning.domain.model.StepName;
 import com.example.provisioning.workflow.engine.DefaultConfigProvider;
 import com.example.provisioning.workflow.engine.RequestValidationException;
+import com.example.provisioning.workflow.engine.SourceStepConfigProvider;
 import com.example.provisioning.workflow.spi.ProvisionContext;
 import com.example.provisioning.workflow.spi.ProvisionStep;
 import lombok.RequiredArgsConstructor;
@@ -17,15 +18,16 @@ import java.util.regex.Pattern;
 
 /**
  * Always the first step. Parses and validates the request's raw
- * {@code org_uid} / {@code org_type} / {@code service_user_account}
+ * {@code org_uid} / {@code org_type} / {@code source} / {@code service_user_account}
  * (structural presence is already enforced by bean validation on
  * {@link com.example.provisioning.api.dto.CreateOrganizationRequest};
  * this step checks the values are well-formed).
  *
  * <p>On success it publishes the resolved organization id, org type,
- * and enabled config sections onto the {@link ProvisionContext} via
- * {@link ProvisionContext#markValidated} — every later step relies on
- * these. On failure it throws {@link RequestValidationException},
+ * enabled config sections, and enabled steps (per {@code source}) onto
+ * the {@link ProvisionContext} via {@link ProvisionContext#markValidated}
+ * — every later step (or the orchestrator, for {@code source}) relies
+ * on these. On failure it throws {@link RequestValidationException},
  * which {@link com.example.provisioning.workflow.engine.StepFailureTranslator}
  * maps to a {@code VALIDATION_FAILED} step error; the orchestrator's
  * fail-fast halt then prevents any of the other steps from running.
@@ -41,6 +43,7 @@ public class InitialRequestValidationStep implements ProvisionStep {
         Pattern.compile("^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$");
 
     private final DefaultConfigProvider defaultConfigProvider;
+    private final SourceStepConfigProvider sourceStepConfigProvider;
 
     @Override
     public StepName name() {
@@ -58,6 +61,7 @@ public class InitialRequestValidationStep implements ProvisionStep {
 
         UUID orgUid = parseOrgUid(context.getRawOrgUid(), violations);
         OrgType orgType = resolveOrgType(context.getRawOrgType(), violations);
+        String source = resolveSource(context.getRawSource(), violations);
         if (!isValidEmail(context.getServiceUserAccount())) {
             violations.add("service_user_account must be a valid email address");
         }
@@ -67,7 +71,8 @@ public class InitialRequestValidationStep implements ProvisionStep {
         }
 
         Set<String> enabledSections = defaultConfigProvider.sectionsFor(orgType);
-        context.markValidated(orgUid, orgType, enabledSections);
+        Set<StepName> enabledSteps = sourceStepConfigProvider.stepsFor(source);
+        context.markValidated(orgUid, orgType, enabledSections, enabledSteps);
     }
 
     private UUID parseOrgUid(String rawOrgUid, List<String> violations) {
@@ -86,6 +91,15 @@ public class InitialRequestValidationStep implements ProvisionStep {
             violations.add("org_type must be one of: STANDARD, INTERNAL, ENTERPRISE");
             return null;
         }
+    }
+
+    private String resolveSource(String rawSource, List<String> violations) {
+        if (!sourceStepConfigProvider.isKnownSource(rawSource)) {
+            violations.add("source must be one of: "
+                + String.join(", ", sourceStepConfigProvider.knownSources()));
+            return null;
+        }
+        return rawSource;
     }
 
     private boolean isValidEmail(String value) {

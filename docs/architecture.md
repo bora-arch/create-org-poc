@@ -2,7 +2,7 @@
 
 ## Goals
 
-- **Extensibility.** Adding a step must not require touching the orchestrator, controllers, or DTOs. Only a new bean.
+- **Extensibility.** Adding a step must not require touching the orchestrator, controllers, or DTOs. Only a new bean, plus adding it to whichever `source_config.json` entries should trigger it.
 - **Observability.** The GET endpoint must at all times return a snapshot that lets a UI render completed / current / remaining steps plus a human error on failure.
 - **Isolation of concerns.** Persistence, orchestration, and step business logic each live in their own class family so each can evolve independently.
 - **Room to grow.** The design must remain intact when the workflow expands to 30–50 steps and when compensation, distributed execution, or event sourcing are added later.
@@ -59,6 +59,8 @@ For POC simplicity the external call runs inside the step's transaction. Product
 
 If the job is already `SUCCESS` or `IN_PROGRESS`, the same `org_uid` is not restarted — the current snapshot is returned as-is (`200 OK`).
 
+`findOrCreateJob` only refreshes `serviceUserAccount` / `externalJobUid` on an existing job — `orgType` and `source` are never overwritten there. Both are only ever persisted once by `markValidationResolved`, right after `INITIAL_REQUEST_VALIDATION` succeeds; a retry that changes either only takes effect while the job is still stuck at validation (i.e. the *first* attempt never got past it). This is deliberate: once later steps have actually executed under a given `org_type`/`source` combination, silently swapping either mid-flight on a later retry would desync which steps were gated by which rules — some already-`SKIPPED` rows would reflect the old rules, and steps newly enabled by the changed value would never get a chance to run since they're not the resume point.
+
 ### 4. Async via a named `ThreadPoolTaskExecutor`, wrapped in a separate bean
 
 `ProvisionWorkflowAsyncRunner.run(UUID, ...)` is `@Async("provisioningExecutor")`. It is a **separate bean** because `@Async` requires proxied invocation — a self-invocation from within `ProvisionWorkflowService` would silently run synchronously. Only primitive/immutable arguments cross the async boundary (`UUID`, `String`) — no JPA entities, which would be detached in the target thread.
@@ -69,7 +71,21 @@ If the job is already `SUCCESS` or `IN_PROGRESS`, the same `org_uid` is not rest
 
 ### 5a. `INITIAL_REQUEST_VALIDATION` always runs first, and runs synchronously
 
-The request's raw `org_uid` / `org_type` / `service_user_account` are validated by a real `ProvisionStep` (order `0`) rather than bean-validation annotations, so an invalid value is persisted and reported through the same step-failure machinery as any other step (visible identically via `POST` and `GET`). `ProvisionWorkflowService.validateSynchronously` runs *only* this step, on the calling thread, before any async hand-off — so an invalid request never starts the background workflow and the `POST` response itself already reflects `status: FAILED` with the failed step's error. Every other step still runs through the normal async `execute()` loop. On success, the resolved `OrgType` is persisted onto the job row (`JobStateWriter.markOrgTypeResolved`) so a later resumed run can reconstruct `ProvisionContext` without re-validating.
+The request's raw `org_uid` / `org_type` / `source` / `service_user_account` are validated by a real `ProvisionStep` (order `0`) rather than bean-validation annotations, so an invalid value is persisted and reported through the same step-failure machinery as any other step (visible identically via `POST` and `GET`). `ProvisionWorkflowService.validateSynchronously` runs *only* this step, on the calling thread, before any async hand-off — so an invalid request never starts the background workflow and the `POST` response itself already reflects `status: FAILED` with the failed step's error. Every other step still runs through the normal async `execute()` loop. On success, the resolved `OrgType` and `source` are persisted onto the job row in one write (`JobStateWriter.markValidationResolved`) so a later resumed run can reconstruct `ProvisionContext` without re-validating.
+
+### 5b. `source` restricts which steps run at all, orthogonal to `org_type`
+
+`org_type` (via `default_config.json` / `ConfigSections`) always decided whether an individual step *applies* — `ProvisionStep.shouldRun(context)`. `source` (via `source_config.json` / `SourceStepConfigProvider`) adds a second, independent gate: which steps a given caller (e.g. `ETL_JOB`, `ADMIN_APP`) is allowed to trigger **at all**. The two compose by AND in the orchestrator loop, not inside individual step classes:
+
+```java
+boolean applies = context.isStepEnabledForSource(step.name()) && step.shouldRun(context);
+```
+
+This was deliberately kept out of `ProvisionStep.shouldRun` implementations — a step that's already conditional on org type (e.g. `ENABLE_PRM_LICENSES`) doesn't need to know anything about sources, and a step that's unconditional today doesn't need a `shouldRun` override added just to support source restriction. Existing step classes are untouched; only the orchestrator and `ProvisionContext` (which now also carries `enabledSteps: Set<StepName>`, published by `INITIAL_REQUEST_VALIDATION` the same way as `enabledSections`) changed.
+
+`INITIAL_REQUEST_VALIDATION` is never itself gated by `source` — it always runs, since it's what validates `source` in the first place. A step excluded by `source` is recorded `SKIPPED` at its normal catalog position (same terminal state as an org-type skip) — this preserves declared execution order among the steps that *do* run; `source` restricts the set, it never reorders it.
+
+Adding a new source (or changing an existing one's step set) is a config-only change to `source_config.json` — no Java code, no enum. `source` is deliberately a plain validated string (checked via `Set.contains`/membership in the loaded config), not a Java enum like `OrgType`, precisely because new calling systems are expected to keep appearing.
 
 ### 6. Read and write paths are separate services
 
