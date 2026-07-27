@@ -40,9 +40,11 @@ public class OrganizationController {
         summary = "Create (or retry) an organization provisioning job",
         description = "org_uid is the idempotency/retry key: resubmitting the same org_uid "
             + "resumes a previously failed job from its failed step (fail-fast — later steps "
-            + "never ran) instead of starting over. INITIAL_REQUEST_VALIDATION always runs "
-            + "first and, when it runs, runs synchronously: an invalid request never starts "
-            + "the async workflow and this call returns immediately with status FAILED, the "
+            + "never ran) instead of starting over. source identifies the calling system and "
+            + "restricts which steps run at all (source_config.json), independent of org_type, "
+            + "which separately decides which of the selected steps apply. INITIAL_REQUEST_VALIDATION "
+            + "always runs first and, when it runs, runs synchronously: an invalid request never "
+            + "starts the async workflow and this call returns immediately with status FAILED, the "
             + "external_job_uid, and the failed step's error. Otherwise the remaining steps "
             + "run asynchronously and 202 Accepted is returned; poll "
             + "GET /organization-provision-jobs/{jobId} for progress.")
@@ -76,7 +78,7 @@ public class OrganizationController {
         int resumeFromOrder = workflowService.firstPendingStepOrder(jobId);
         if (resumeFromOrder == InitialRequestValidationStep.ORDER) {
             boolean valid = workflowService.validateSynchronously(
-                jobId, request.orgUid(), request.orgType(),
+                jobId, request.orgUid(), request.orgType(), request.source(),
                 request.serviceUserAccount(), request.externalJobUid());
             if (!valid) {
                 return ResponseEntity.ok(queryService.fetch(jobId));

@@ -42,14 +42,19 @@ public class JobStateWriter {
     }
 
     /**
-     * Persists the org type resolved by {@code INITIAL_REQUEST_VALIDATION}
-     * so a later resumed run can reconstruct it without re-validating
-     * the request.
+     * Persists the org type and source resolved by
+     * {@code INITIAL_REQUEST_VALIDATION} so a later resumed run can
+     * reconstruct enabled sections/steps without re-validating the
+     * request. {@code source} is deliberately not persisted before
+     * validation succeeds — like {@code orgType}, its raw request value
+     * is reused fresh on every validation attempt (a retry can correct
+     * an invalid value) rather than being locked in at job creation.
      */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
-    public void markOrgTypeResolved(UUID jobId, OrgType orgType) {
+    public void markValidationResolved(UUID jobId, OrgType orgType, String source) {
         OrganizationProvisionJob job = load(jobId);
         job.setOrgType(orgType);
+        job.setSource(source);
         workflowRepository.save(job);
     }
 

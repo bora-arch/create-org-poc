@@ -3,7 +3,9 @@
 The workflow persists two tables (H2 in the POC): one job row in
 `organization_provision_job` and one row per catalog step in
 `organization_provision_step`. Below is a completed job created with
-`org_type = "STANDARD"`. That profile
+`org_type = "STANDARD"` and `source = "DEFAULT"` (the unrestricted
+source — see [`source_config.json`](../../src/main/resources/source_config.json)).
+The `org_type` profile
 ([`default_config.json`](../../src/main/resources/default_config.json))
 enables `branding`, `rfs_ui_prm_preferences`, `citations`, and
 `license` — so three steps are **skipped**:
@@ -16,19 +18,48 @@ Job id: `8b1b2f2c-4a11-4e7a-9c6b-7a1c3b2a0e11`
 
 ## `organization_provision_job`
 
-| id | org_uid | external_job_uid | org_type | status | current_step | started_at | finished_at | service_user_account |
-|----|---------|-------------------|----------|--------|--------------|------------|-------------|----------------------|
-| 8b1b2f2c-…-0e11 | 3f2a9c14-…-b7d2 | ext-job-482 | STANDARD | SUCCESS | SETUP_FSP_BOOSTERS | 2026-07-07T10:15:02.100Z | 2026-07-07T10:15:04.480Z | sav20006@gmail.com |
+| id | org_uid | external_job_uid | source | org_type | status | current_step | started_at | finished_at | service_user_account |
+|----|---------|-------------------|--------|----------|--------|--------------|------------|-------------|----------------------|
+| 8b1b2f2c-…-0e11 | 3f2a9c14-…-b7d2 | ext-job-482 | DEFAULT | STANDARD | SUCCESS | SETUP_FSP_BOOSTERS | 2026-07-07T10:15:02.100Z | 2026-07-07T10:15:04.480Z | sav20006@gmail.com |
 
 `current_step` holds the last step the orchestrator pointed at.
 `markCurrentStep` is not called for skipped steps, so on the *last*
 step of a run it lands on whichever step actually executed last, not
 necessarily the final entry in the catalog.
 
-`org_type` starts `NULL` and is only set once
-`INITIAL_REQUEST_VALIDATION` succeeds (`JobStateWriter.markOrgTypeResolved`)
-— a job that failed at validation has `org_type = NULL` and
-`status = FAILED`.
+`org_type` and `source` both start `NULL` and are only set once
+`INITIAL_REQUEST_VALIDATION` succeeds
+(`JobStateWriter.markValidationResolved`) — a job that failed at
+validation has `org_type = NULL`, `source = NULL`, and
+`status = FAILED`. Once resolved, neither is overwritten by a later
+retry (`ProvisionWorkflowService.findOrCreateJob` only refreshes
+`service_user_account` / `external_job_uid`) — a job's step selection
+can't desync mid-flight from a request that later changes org type or
+source.
+
+**`source = "DEFAULT"` is what makes the 13-row table below meaningful
+as an org-type-gating example** — `DEFAULT`'s profile in
+`source_config.json` lists all 12 non-validation steps, so every one
+of them gets a row and org-type gating (`SKIPPED` vs. `SUCCESS`) is
+the only thing distinguishing them.
+
+A job created with `source = "ETL_JOB"` instead would **not** have 13
+rows with most of them `SKIPPED` — it would have exactly **3** rows,
+period, because `seedStepsForSource` only ever inserts a row for a
+step in the source's allow-list (`CREATE_ORG_IN_FSP` and
+`ENABLE_PRM_LICENSES`, plus the always-seeded
+`INITIAL_REQUEST_VALIDATION`):
+
+| id | job_id | step_order | step_name | status |
+|----|--------|-----------:|-----------|--------|
+| …-0000 | (etl job id) |   0 | INITIAL_REQUEST_VALIDATION | SUCCESS |
+| …-0001 | (etl job id) |  10 | CREATE_ORG_IN_FSP          | SUCCESS |
+| …-0002 | (etl job id) | 100 | ENABLE_PRM_LICENSES        | SUCCESS |
+
+No row for `step_order` 20, 30, 40, … ever exists for this job — not
+`SKIPPED`, not `NOT_STARTED`, nothing. `GET`/`POST` responses for it
+report `totalSteps: 3`, never `13`. See
+[`GET-job-source-restricted.json`](GET-job-source-restricted.json).
 
 ## `organization_provision_step`
 
@@ -79,11 +110,11 @@ WHERE  job_id = '8b1b2f2c-4a11-4e7a-9c6b-7a1c3b2a0e11'
 ORDER  BY step_order;
 
 -- How did each job resolve its steps?
-SELECT j.org_type, s.status, COUNT(*)
+SELECT j.source, j.org_type, s.status, COUNT(*)
 FROM   organization_provision_step s
 JOIN   organization_provision_job  j ON j.id = s.job_id
-GROUP  BY j.org_type, s.status
-ORDER  BY j.org_type, s.status;
+GROUP  BY j.source, j.org_type, s.status
+ORDER  BY j.source, j.org_type, s.status;
 
 -- Look up a job by its retry key
 SELECT * FROM organization_provision_job WHERE org_uid = '3f2a9c14-7b41-4e2a-9c31-8a2f6d1eb7d2';

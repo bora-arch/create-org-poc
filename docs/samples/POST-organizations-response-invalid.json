@@ -1,25 +1,13 @@
 {
-  "_comment": "org_uid was not a valid UUID. INITIAL_REQUEST_VALIDATION ran synchronously on the request thread, so this is the direct POST /organizations response (HTTP 200) — the async workflow never started and steps 2-13 stay NOT_STARTED.",
+  "_comment": "org_uid was not a valid UUID. INITIAL_REQUEST_VALIDATION ran synchronously on the request thread, so this is the direct POST /organizations response (HTTP 200) — the async workflow never started. Since validation failed, 'source' was never resolved, so no other step rows were ever seeded — 'steps' has exactly one entry, not twelve NOT_STARTED placeholders. 'source' itself is omitted (null) for the same reason.",
   "jobId": "8b1b2f2c-4a11-4e7a-9c6b-7a1c3b2a0e11",
   "orgUid": "not-a-uuid",
   "externalJobUid": "ext-job-482",
   "status": "FAILED",
   "currentStep": "INITIAL_REQUEST_VALIDATION",
-  "progress": 0,
-  "totalSteps": 13,
+  "progress": 1,
+  "totalSteps": 1,
   "steps": [
-    { "name": "INITIAL_REQUEST_VALIDATION", "status": "FAILED", "errorCode": "VALIDATION_FAILED", "errorMessage": "org_uid must be a valid UUID" },
-    { "name": "CREATE_ORG_IN_FSP",                      "status": "NOT_STARTED" },
-    { "name": "SETUP_ORG_IN_FSP",                       "status": "NOT_STARTED" },
-    { "name": "ASSIGN_FSP_RECOMMENDATION_MODELS",       "status": "NOT_STARTED" },
-    { "name": "SETUP_DEFAULT_BRANDING_PRM_PREFERENCES", "status": "NOT_STARTED" },
-    { "name": "SETUP_DEFAULT_PRM_PREFERENCES",          "status": "NOT_STARTED" },
-    { "name": "SETUP_DEFAULT_RFS_UI_PRM_PREFERENCES",   "status": "NOT_STARTED" },
-    { "name": "SETUP_DEFAULT_VOCABULARIES_IN_CE",       "status": "NOT_STARTED" },
-    { "name": "SETUP_DEFAULT_DATASOURCES_IN_FSP",       "status": "NOT_STARTED" },
-    { "name": "SETUP_DEFAULT_CITATIONS",                "status": "NOT_STARTED" },
-    { "name": "ENABLE_PRM_LICENSES",                    "status": "NOT_STARTED" },
-    { "name": "DISABLE_PRM_LICENSES",                   "status": "NOT_STARTED" },
-    { "name": "SETUP_FSP_BOOSTERS",                     "status": "NOT_STARTED" }
+    { "name": "INITIAL_REQUEST_VALIDATION", "status": "FAILED", "errorCode": "VALIDATION_FAILED", "errorMessage": "org_uid must be a valid UUID" }
   ]
 }

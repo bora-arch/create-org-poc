@@ -41,7 +41,8 @@ class OrganizationControllerIT {
 
     // "STANDARD" (the default org type) enables branding, rfs_ui, citations,
     // and license — so ASSIGN_FSP_RECOMMENDATION_MODELS, DISABLE_PRM_LICENSES,
-    // and SETUP_FSP_BOOSTERS are skipped.
+    // and SETUP_FSP_BOOSTERS are skipped. Uses source=DEFAULT, which selects
+    // every step, so only org_type gating is under test here.
     private static final Set<String> STANDARD_SKIPPED = Set.of(
         "ASSIGN_FSP_RECOMMENDATION_MODELS", "DISABLE_PRM_LICENSES", "SETUP_FSP_BOOSTERS");
 
@@ -54,7 +55,8 @@ class OrganizationControllerIT {
 
     @Test
     void standardOrgType_skipsRecommendationDisableAndBoosters() throws Exception {
-        JsonNode accepted = postOrganization(requestJson(newOrgUid(), "STANDARD", "sav20006@gmail.com", "ext-1"));
+        JsonNode accepted = postOrganization(
+            requestJson(newOrgUid(), "STANDARD", "DEFAULT", "sav20006@gmail.com", "ext-1"));
         UUID jobId = UUID.fromString(accepted.get("jobId").asText());
 
         awaitSuccessWithSkips(jobId, STANDARD_SKIPPED);
@@ -62,7 +64,8 @@ class OrganizationControllerIT {
 
     @Test
     void internalOrgType_skipsAllExternalSectionsAndRunsDisableLicenses() throws Exception {
-        JsonNode accepted = postOrganization(requestJson(newOrgUid(), "INTERNAL", "sav20006@gmail.com", "ext-2"));
+        JsonNode accepted = postOrganization(
+            requestJson(newOrgUid(), "INTERNAL", "DEFAULT", "sav20006@gmail.com", "ext-2"));
         UUID jobId = UUID.fromString(accepted.get("jobId").asText());
 
         awaitSuccessWithSkips(jobId, INTERNAL_SKIPPED);
@@ -70,27 +73,80 @@ class OrganizationControllerIT {
 
     @Test
     void enterpriseOrgType_runsAllExceptDisableLicenses() throws Exception {
-        JsonNode accepted = postOrganization(requestJson(newOrgUid(), "ENTERPRISE", "sav20006@gmail.com", "ext-3"));
+        JsonNode accepted = postOrganization(
+            requestJson(newOrgUid(), "ENTERPRISE", "DEFAULT", "sav20006@gmail.com", "ext-3"));
         UUID jobId = UUID.fromString(accepted.get("jobId").asText());
 
         awaitSuccessWithSkips(jobId, Set.of("DISABLE_PRM_LICENSES"));
     }
 
     @Test
+    void etlJobSource_stepListContainsOnlyValidationCreateOrgAndEnableLicenses() throws Exception {
+        JsonNode accepted = postOrganization(
+            requestJson(newOrgUid(), "STANDARD", "ETL_JOB", "sav20006@gmail.com", "ext-etl"));
+        UUID jobId = UUID.fromString(accepted.get("jobId").asText());
+
+        JsonNode state = awaitStatus(jobId, "SUCCESS");
+        // Steps not configured for this source have no row at all — they
+        // are absent from the list entirely, not reported SKIPPED.
+        assertThat(state.get("steps")).hasSize(3);
+        assertThat(state.get("progress").asInt()).isEqualTo(3);
+        assertThat(state.get("totalSteps").asInt()).isEqualTo(3);
+        assertThat(findStep(state, "INITIAL_REQUEST_VALIDATION").get("status").asText()).isEqualTo("SUCCESS");
+        assertThat(findStep(state, "CREATE_ORG_IN_FSP").get("status").asText()).isEqualTo("SUCCESS");
+        assertThat(findStep(state, "ENABLE_PRM_LICENSES").get("status").asText()).isEqualTo("SUCCESS");
+    }
+
+    @Test
+    void adminAppSource_stepListContainsOnlyValidationCreateOrgAndVocabularies() throws Exception {
+        JsonNode accepted = postOrganization(
+            requestJson(newOrgUid(), "STANDARD", "ADMIN_APP", "sav20006@gmail.com", "ext-admin"));
+        UUID jobId = UUID.fromString(accepted.get("jobId").asText());
+
+        JsonNode state = awaitStatus(jobId, "SUCCESS");
+        assertThat(state.get("steps")).hasSize(3);
+        assertThat(state.get("progress").asInt()).isEqualTo(3);
+        assertThat(state.get("totalSteps").asInt()).isEqualTo(3);
+        assertThat(findStep(state, "INITIAL_REQUEST_VALIDATION").get("status").asText()).isEqualTo("SUCCESS");
+        assertThat(findStep(state, "CREATE_ORG_IN_FSP").get("status").asText()).isEqualTo("SUCCESS");
+        assertThat(findStep(state, "SETUP_DEFAULT_VOCABULARIES_IN_CE").get("status").asText()).isEqualTo("SUCCESS");
+    }
+
+    @Test
+    void etlJobSource_preservesCatalogOrderAmongSelectedSteps() throws Exception {
+        JsonNode accepted = postOrganization(
+            requestJson(newOrgUid(), "STANDARD", "ETL_JOB", "sav20006@gmail.com", "ext-order"));
+        UUID jobId = UUID.fromString(accepted.get("jobId").asText());
+
+        JsonNode state = awaitStatus(jobId, "SUCCESS");
+        // ENABLE_PRM_LICENSES (catalog order 100) must still appear after
+        // CREATE_ORG_IN_FSP (order 10), and only these three steps at all —
+        // source restricts the set, it does not reorder it, and steps
+        // outside the set aren't merely skipped, they're absent.
+        java.util.List<String> names = new java.util.ArrayList<>();
+        state.get("steps").forEach(s -> names.add(s.get("name").asText()));
+        assertThat(names).containsExactly("INITIAL_REQUEST_VALIDATION", "CREATE_ORG_IN_FSP", "ENABLE_PRM_LICENSES");
+    }
+
+    @Test
     void invalidOrgUid_isRejectedSynchronouslyWithFirstStepFailed() throws Exception {
         MvcResult result = mockMvc.perform(post("/organizations")
                 .contentType(APPLICATION_JSON)
-                .content(requestJson("not-a-uuid", "STANDARD", "sav20006@gmail.com", "ext-4")))
+                .content(requestJson("not-a-uuid", "STANDARD", "DEFAULT", "sav20006@gmail.com", "ext-4")))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.status").value("FAILED"))
             .andExpect(jsonPath("$.externalJobUid").value("ext-4"))
             .andExpect(jsonPath("$.steps[0].name").value("INITIAL_REQUEST_VALIDATION"))
             .andExpect(jsonPath("$.steps[0].status").value("FAILED"))
             .andExpect(jsonPath("$.steps[0].errorCode").value("VALIDATION_FAILED"))
-            .andExpect(jsonPath("$.steps[1].status").value("NOT_STARTED"))
             .andReturn();
 
         JsonNode body = objectMapper.readTree(result.getResponse().getContentAsString());
+        // source was never resolved (validation failed before it could be),
+        // so no other step rows exist at all — not even NOT_STARTED ones.
+        assertThat(body.get("steps")).hasSize(1);
+        assertThat(body.get("progress").asInt()).isEqualTo(1);
+        assertThat(body.get("totalSteps").asInt()).isEqualTo(1);
         assertThat(body.get("steps").get(0).get("errorMessage").asText())
             .contains("org_uid must be a valid UUID");
     }
@@ -99,11 +155,22 @@ class OrganizationControllerIT {
     void invalidOrgType_isRejectedSynchronously() throws Exception {
         mockMvc.perform(post("/organizations")
                 .contentType(APPLICATION_JSON)
-                .content(requestJson(newOrgUid(), "bogus-tier", "sav20006@gmail.com", "ext-5")))
+                .content(requestJson(newOrgUid(), "bogus-tier", "DEFAULT", "sav20006@gmail.com", "ext-5")))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.status").value("FAILED"))
             .andExpect(jsonPath("$.steps[0].errorMessage").value(
                 org.hamcrest.Matchers.containsString("org_type must be one of")));
+    }
+
+    @Test
+    void invalidSource_isRejectedSynchronously() throws Exception {
+        mockMvc.perform(post("/organizations")
+                .contentType(APPLICATION_JSON)
+                .content(requestJson(newOrgUid(), "STANDARD", "BOGUS_SOURCE", "sav20006@gmail.com", "ext-6")))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.status").value("FAILED"))
+            .andExpect(jsonPath("$.steps[0].errorMessage").value(
+                org.hamcrest.Matchers.containsString("source must be one of")));
     }
 
     @Test
@@ -127,7 +194,7 @@ class OrganizationControllerIT {
     void retryWithSameOrgUid_resumesFromFailedStepInsteadOfRestarting() throws Exception {
         client.armFailureOnce();
         String orgUid = newOrgUid();
-        String body = requestJson(orgUid, "STANDARD", "sav20006@gmail.com", "ext-retry");
+        String body = requestJson(orgUid, "STANDARD", "DEFAULT", "sav20006@gmail.com", "ext-retry");
 
         JsonNode firstResponse = postOrganization(body);
         UUID jobId = UUID.fromString(firstResponse.get("jobId").asText());
@@ -215,11 +282,11 @@ class OrganizationControllerIT {
         return UUID.randomUUID().toString();
     }
 
-    private static String requestJson(String orgUid, String orgType, String serviceUserAccount,
-                                      String externalJobUid) {
+    private static String requestJson(String orgUid, String orgType, String source,
+                                      String serviceUserAccount, String externalJobUid) {
         return """
-            {"org_uid":"%s","org_type":"%s","service_user_account":"%s","external_job_uid":"%s"}
-            """.formatted(orgUid, orgType, serviceUserAccount, externalJobUid);
+            {"org_uid":"%s","org_type":"%s","source":"%s","service_user_account":"%s","external_job_uid":"%s"}
+            """.formatted(orgUid, orgType, source, serviceUserAccount, externalJobUid);
     }
 
     @TestConfiguration

@@ -4,7 +4,7 @@ info:
   description: |-
     Asynchronous, orchestrator-driven organization provisioning.
 
-    `POST /organizations` accepts a create/retry request and drives a sequence of 13 provisioning steps — `INITIAL_REQUEST_VALIDATION` always first, then 12 external provisioning steps. `org_uid` is the idempotency/retry key: resubmitting the same `org_uid` resumes a previously FAILED job at its failed step (fail-fast — later steps never ran) instead of starting over. `INITIAL_REQUEST_VALIDATION` runs synchronously: an invalid request never starts the background workflow and the call returns immediately with `status: FAILED`, the `external_job_uid`, and the failed step's error. Otherwise the remaining steps run asynchronously and `202 Accepted` is returned. `GET /organization-provision-jobs/{jobId}` returns the full workflow state — per-step status (including `SKIPPED` steps that do not apply to the org tier), the current step, and progress — for a UI to poll and render.
+    `POST /organizations` accepts a create/retry request and drives a sequence of up to 13 provisioning steps — `INITIAL_REQUEST_VALIDATION` always first, then up to 12 further external provisioning steps. `org_uid` is the idempotency/retry key: resubmitting the same `org_uid` resumes a previously FAILED job at its failed step (fail-fast — later steps never ran) instead of starting over. `source` (e.g. `DEFAULT`, `ETL_JOB`, `ADMIN_APP`) independently restricts which steps are even seeded for the job at all (`source_config.json`) — a step outside that set never gets a row and is absent from every response, not reported `SKIPPED`; `org_type` then decides which of the *seeded* steps apply (`default_config.json`), and only that gate is ever surfaced as `SKIPPED`. `INITIAL_REQUEST_VALIDATION` runs synchronously: an invalid request never starts the background workflow and the call returns immediately with `status: FAILED`, the `external_job_uid`, and the failed step's error (and, since `source` was never resolved, `steps` has exactly one entry). Otherwise the remaining steps run asynchronously and `202 Accepted` is returned. `GET /organization-provision-jobs/{jobId}` returns the full workflow state — per-step status for every step `source` selected (including `SKIPPED` ones that don't apply to the org tier), the current step, and progress — for a UI to poll and render.
   contact:
     name: create-org-poc
     url: https://github.com/bora-arch/create-org-poc
@@ -28,12 +28,15 @@ paths:
       summary: Create (or retry) an organization provisioning job
       description: "org_uid is the idempotency/retry key: resubmitting the same\
         \ org_uid resumes a previously failed job from its failed step (fail-fast\
-        \ — later steps never ran) instead of starting over. INITIAL_REQUEST_VALIDATION\
-        \ always runs first and, when it runs, runs synchronously: an invalid request\
-        \ never starts the async workflow and this call returns immediately with\
-        \ status FAILED, the external_job_uid, and the failed step's error. Otherwise\
-        \ the remaining steps run asynchronously and 202 Accepted is returned; poll\
-        \ GET /organization-provision-jobs/{jobId} for progress."
+        \ — later steps never ran) instead of starting over. source identifies the\
+        \ calling system and restricts which steps run at all (source_config.json),\
+        \ independent of org_type, which separately decides which of the selected\
+        \ steps apply. INITIAL_REQUEST_VALIDATION always runs first and, when it\
+        \ runs, runs synchronously: an invalid request never starts the async workflow\
+        \ and this call returns immediately with status FAILED, the external_job_uid,\
+        \ and the failed step's error. Otherwise the remaining steps run asynchronously\
+        \ and 202 Accepted is returned; poll GET /organization-provision-jobs/{jobId}\
+        \ for progress."
       operationId: createOrganization
       requestBody:
         content:
@@ -68,8 +71,10 @@ paths:
       - Provision Jobs
       summary: Get provisioning job state
       description: "Returns the full workflow state for a job — overall status, the\
-        \ current step, progress, total steps, and the per-step list (including SKIPPED\
-        \ steps that do not apply to the org tier)."
+        \ current step, progress, total steps, and the per-step list, scoped to the\
+        \ steps the job's source selected (including SKIPPED entries among those for\
+        \ steps that don't apply to the org tier — steps source never selected are\
+        \ absent from the list rather than SKIPPED)."
       operationId: getJob
       parameters:
       - name: jobId
@@ -98,6 +103,7 @@ components:
       required:
       - org_uid
       - org_type
+      - source
       - service_user_account
       - external_job_uid
       type: object
@@ -115,8 +121,19 @@ components:
           minLength: 0
           type: string
           description: Organization tier; selects the config profile that decides
-            which steps run vs. are SKIPPED. Must exactly match one of the OrgType enum constants: STANDARD, INTERNAL, ENTERPRISE.
+            which of the steps source seeded run vs. are SKIPPED. Must exactly match
+            one of the OrgType enum constants: STANDARD, INTERNAL, ENTERPRISE.
           example: STANDARD
+        source:
+          maxLength: 64
+          minLength: 0
+          type: string
+          description: Identifies the calling system; selects the fixed set of steps
+            that are even seeded for this job (source_config.json) — steps outside
+            that set never get a row and never appear in any response for this job,
+            independent of org_type. Must exactly match a configured source, e.g.
+            DEFAULT, ETL_JOB, ADMIN_APP.
+          example: DEFAULT
         service_user_account:
           maxLength: 255
           minLength: 0
@@ -136,9 +153,10 @@ components:
         Fields are validated in two stages: structural presence (400 Bad
         Request if a field is missing/blank) here at the HTTP boundary, and
         format/semantic validity (is org_uid really a UUID, is org_type a
-        known tier) by the INITIAL_REQUEST_VALIDATION workflow step — a
-        malformed value produces a normal step-failure response (200, status
-        FAILED) rather than a raw deserialization error.
+        known tier, is source a configured source) by the
+        INITIAL_REQUEST_VALIDATION workflow step — a malformed value
+        produces a normal step-failure response (200, status FAILED)
+        rather than a raw deserialization error.
     ApiErrorResponse:
       type: object
       properties:
@@ -196,6 +214,14 @@ components:
           type: string
           description: Caller-supplied job identifier, echoed back from the request
           example: external_job_uid
+        source:
+          type: string
+          description: Calling system identified by the request; selects the fixed
+            set of steps that were even seeded for this job, independent of orgType
+            — steps outside that set are absent from `steps` entirely. Null until
+            INITIAL_REQUEST_VALIDATION resolves it (in which case `steps` has only
+            the INITIAL_REQUEST_VALIDATION entry).
+          example: DEFAULT
         status:
           type: string
           description: Overall workflow status
@@ -226,18 +252,22 @@ components:
           - SETUP_FSP_BOOSTERS
         progress:
           type: integer
-          description: Number of steps that have reached a terminal state (SUCCESS
-            or SKIPPED)
+          description: Number of steps (among those source seeded) that have reached
+            a terminal state (SUCCESS or SKIPPED)
           format: int32
           example: 4
         totalSteps:
           type: integer
-          description: Total number of steps in the workflow
+          description: Total number of steps seeded for this job — i.e. the size of
+            source's configured step set (plus INITIAL_REQUEST_VALIDATION), not the
+            full catalog. 1 if source hasn't been resolved yet.
           format: int32
           example: 13
         steps:
           type: array
-          description: "Per-step status, in execution order"
+          description: "Per-step status, in execution order. Only contains steps
+            source selected — a step outside that set is never included, not even
+            as NOT_STARTED/SKIPPED."
           items:
             $ref: "#/components/schemas/ProvisionStepResponse"
       description: Full provisioning workflow state for a job

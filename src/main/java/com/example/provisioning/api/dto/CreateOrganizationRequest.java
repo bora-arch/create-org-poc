@@ -32,6 +32,13 @@ public record CreateOrganizationRequest(
         example = "STANDARD", requiredMode = Schema.RequiredMode.REQUIRED)
     @NotBlank @Size(max = 64) String orgType,
 
+    @JsonProperty("source")
+    @Schema(description = "Identifies the calling system; selects the fixed set of steps that "
+        + "system is allowed to trigger (source_config.json), independent of org_type. Must "
+        + "exactly match a configured source, e.g. DEFAULT, ETL_JOB, ADMIN_APP.",
+        example = "DEFAULT", requiredMode = Schema.RequiredMode.REQUIRED)
+    @NotBlank @Size(max = 64) String source,
+
     @JsonProperty("service_user_account")
     @Schema(description = "Email of the service account provisioning is performed on behalf of",
         example = "sav20006@gmail.com", requiredMode = Schema.RequiredMode.REQUIRED)

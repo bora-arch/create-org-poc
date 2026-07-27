@@ -1,6 +1,7 @@
 package com.example.provisioning.workflow.spi;
 
 import com.example.provisioning.domain.model.OrgType;
+import com.example.provisioning.domain.model.StepName;
 import lombok.Getter;
 
 import java.util.HashMap;
@@ -17,13 +18,15 @@ import java.util.UUID;
  * and read/write typed attributes to hand data downstream — an earlier
  * step publishes a value under a key that a later step consumes.
  *
- * <p>{@code rawOrgUid} / {@code rawOrgType} are the unvalidated strings
- * from the request body. {@link com.example.provisioning.workflow.steps.InitialRequestValidationStep}
+ * <p>{@code rawOrgUid} / {@code rawOrgType} / {@code rawSource} are the
+ * unvalidated strings from the request body. {@link com.example.provisioning.workflow.steps.InitialRequestValidationStep}
  * — always the first step — parses and validates them, then calls
  * {@link #markValidated} to publish the resolved {@code organizationId} /
- * {@code orgType} / {@code enabledSections} that every later step relies
- * on via {@link #hasSection(String)}. A step whose section is absent for
- * the org type is skipped.
+ * {@code orgType} / {@code enabledSections} / {@code enabledSteps} that
+ * every later step (or the orchestrator, for {@code enabledSteps})
+ * relies on. A step whose section is absent for the org type is
+ * skipped ({@link #hasSection(String)}); a step not selected by the
+ * request's {@code source} is skipped too ({@link #isStepEnabledForSource(StepName)}).
  */
 @Getter
 public class ProvisionContext {
@@ -31,6 +34,7 @@ public class ProvisionContext {
     private final UUID jobId;
     private final String rawOrgUid;
     private final String rawOrgType;
+    private final String rawSource;
     private final String serviceUserAccount;
     private final String externalJobUid;
     private final Map<String, Object> attributes = new HashMap<>();
@@ -38,12 +42,14 @@ public class ProvisionContext {
     private UUID organizationId;
     private OrgType orgType;
     private Set<String> enabledSections = Set.of();
+    private Set<StepName> enabledSteps = Set.of();
 
-    public ProvisionContext(UUID jobId, String rawOrgUid, String rawOrgType,
+    public ProvisionContext(UUID jobId, String rawOrgUid, String rawOrgType, String rawSource,
                             String serviceUserAccount, String externalJobUid) {
         this.jobId = jobId;
         this.rawOrgUid = rawOrgUid;
         this.rawOrgType = rawOrgType;
+        this.rawSource = rawSource;
         this.serviceUserAccount = serviceUserAccount;
         this.externalJobUid = externalJobUid;
     }
@@ -53,17 +59,24 @@ public class ProvisionContext {
         return enabledSections.contains(section);
     }
 
+    /** True if the request's {@code source} selects this step to run at all. */
+    public boolean isStepEnabledForSource(StepName step) {
+        return enabledSteps.contains(step);
+    }
+
     /**
      * Published once by {@link com.example.provisioning.workflow.steps.InitialRequestValidationStep}
-     * after it successfully parses {@code rawOrgUid} / {@code rawOrgType}.
-     * On a resumed run (validation already succeeded in a prior attempt)
-     * the orchestrator calls this directly with the persisted values
-     * instead of re-running the step.
+     * after it successfully parses {@code rawOrgUid} / {@code rawOrgType} /
+     * {@code rawSource}. On a resumed run (validation already succeeded
+     * in a prior attempt) the orchestrator calls this directly with the
+     * persisted values instead of re-running the step.
      */
-    public void markValidated(UUID organizationId, OrgType orgType, Set<String> enabledSections) {
+    public void markValidated(UUID organizationId, OrgType orgType, Set<String> enabledSections,
+                              Set<StepName> enabledSteps) {
         this.organizationId = organizationId;
         this.orgType = orgType;
         this.enabledSections = enabledSections;
+        this.enabledSteps = enabledSteps;
     }
 
     public <T> void put(String key, T value) {
