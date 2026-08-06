@@ -2,7 +2,6 @@ package com.example.provisioning.workflow.steps;
 
 import com.example.provisioning.domain.model.OrgType;
 import com.example.provisioning.domain.model.StepName;
-import com.example.provisioning.workflow.engine.DefaultConfigProvider;
 import com.example.provisioning.workflow.engine.RequestValidationException;
 import com.example.provisioning.workflow.engine.SourceStepConfigProvider;
 import com.example.provisioning.workflow.spi.ProvisionContext;
@@ -24,11 +23,14 @@ import java.util.regex.Pattern;
  * this step checks the values are well-formed).
  *
  * <p>On success it publishes the resolved organization id, org type,
- * enabled config sections, and enabled steps (per {@code source}) onto
- * the {@link ProvisionContext} via {@link ProvisionContext#markValidated}
- * — every later step (or the orchestrator, for {@code source}) relies
- * on these. On failure it throws {@link RequestValidationException},
- * which {@link com.example.provisioning.workflow.engine.StepFailureTranslator}
+ * and enabled steps (per {@code source}) onto the {@link ProvisionContext}
+ * via {@link ProvisionContext#markValidated} — every later step (or
+ * the orchestrator, for {@code source}) relies on these. {@code orgType}
+ * itself is published too, but this step does not resolve or attach
+ * any org-type-derived config — that's a concern of the one step pair
+ * that actually needs it (see {@code EnablePrmLicensesStep}), not this
+ * one. On failure it throws {@link RequestValidationException}, which
+ * {@link com.example.provisioning.workflow.engine.StepFailureTranslator}
  * maps to a {@code VALIDATION_FAILED} step error; the orchestrator's
  * fail-fast halt then prevents any of the other steps from running.
  */
@@ -42,7 +44,6 @@ public class InitialRequestValidationStep implements ProvisionStep {
     private static final Pattern EMAIL_PATTERN =
         Pattern.compile("^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$");
 
-    private final DefaultConfigProvider defaultConfigProvider;
     private final SourceStepConfigProvider sourceStepConfigProvider;
 
     @Override
@@ -70,9 +71,8 @@ public class InitialRequestValidationStep implements ProvisionStep {
             throw new RequestValidationException(String.join("; ", violations));
         }
 
-        Set<String> enabledSections = defaultConfigProvider.sectionsFor(orgType);
         Set<StepName> enabledSteps = sourceStepConfigProvider.stepsFor(source);
-        context.markValidated(orgUid, orgType, enabledSections, enabledSteps);
+        context.markValidated(orgUid, orgType, enabledSteps);
     }
 
     private UUID parseOrgUid(String rawOrgUid, List<String> violations) {

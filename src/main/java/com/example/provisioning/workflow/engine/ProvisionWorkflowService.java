@@ -60,7 +60,6 @@ public class ProvisionWorkflowService {
     private final StepRegistry stepRegistry;
     private final StepExecutor stepExecutor;
     private final JobStateWriter jobStateWriter;
-    private final DefaultConfigProvider defaultConfigProvider;
     private final SourceStepConfigProvider sourceStepConfigProvider;
 
     /**
@@ -110,7 +109,7 @@ public class ProvisionWorkflowService {
     /**
      * Runs only {@code INITIAL_REQUEST_VALIDATION}, synchronously, on
      * the calling thread. Returns {@code true} if the request is valid
-     * (org type, source, and their derived enabled sections/steps are
+     * (org type and source, and source's derived enabled steps, are
      * now resolved and persisted onto the job), {@code false} if it
      * failed validation — in which case the job is already marked
      * FAILED and the caller should respond with the current job state
@@ -180,11 +179,10 @@ public class ProvisionWorkflowService {
             throw new IllegalStateException(
                 "Job " + jobId + " has no resolved orgType/source; validation must succeed before execute()");
         }
-        Set<String> enabledSections = defaultConfigProvider.sectionsFor(orgType);
         Set<StepName> enabledSteps = sourceStepConfigProvider.stepsFor(source);
         ProvisionContext context = new ProvisionContext(
             jobId, rawOrgUid, orgType.name(), source, serviceUserAccount, externalJobUid);
-        context.markValidated(UUID.fromString(job.getOrgUid()), orgType, enabledSections, enabledSteps);
+        context.markValidated(UUID.fromString(job.getOrgUid()), orgType, enabledSteps);
 
         jobStateWriter.markStarted(jobId);
         List<ProvisionStep> steps = stepRegistry.ordered();

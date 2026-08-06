@@ -22,11 +22,14 @@ import java.util.UUID;
  * unvalidated strings from the request body. {@link com.example.provisioning.workflow.steps.InitialRequestValidationStep}
  * — always the first step — parses and validates them, then calls
  * {@link #markValidated} to publish the resolved {@code organizationId} /
- * {@code orgType} / {@code enabledSections} / {@code enabledSteps} that
- * every later step (or the orchestrator, for {@code enabledSteps})
- * relies on. A step whose section is absent for the org type is
- * skipped ({@link #hasSection(String)}); a step not selected by the
- * request's {@code source} is skipped too ({@link #isStepEnabledForSource(StepName)}).
+ * {@code orgType} / {@code enabledSteps}. Only {@code enabledSteps} is
+ * a general orchestration concern — a step not selected by the
+ * request's {@code source} is skipped ({@link #isStepEnabledForSource(StepName)}).
+ * {@code orgType} itself is exposed for the rare step whose own
+ * {@code shouldRun} needs it (see {@code EnablePrmLicensesStep}) — it
+ * reads {@code DefaultConfigProvider} directly rather than this class
+ * exposing a generic, centrally-computed "enabled sections" concept
+ * that most steps never use.
  */
 @Getter
 public class ProvisionContext {
@@ -41,7 +44,6 @@ public class ProvisionContext {
 
     private UUID organizationId;
     private OrgType orgType;
-    private Set<String> enabledSections = Set.of();
     private Set<StepName> enabledSteps = Set.of();
 
     public ProvisionContext(UUID jobId, String rawOrgUid, String rawOrgType, String rawSource,
@@ -52,11 +54,6 @@ public class ProvisionContext {
         this.rawSource = rawSource;
         this.serviceUserAccount = serviceUserAccount;
         this.externalJobUid = externalJobUid;
-    }
-
-    /** True if {@code section} is enabled for this job's org type. */
-    public boolean hasSection(String section) {
-        return enabledSections.contains(section);
     }
 
     /** True if the request's {@code source} selects this step to run at all. */
@@ -71,11 +68,9 @@ public class ProvisionContext {
      * in a prior attempt) the orchestrator calls this directly with the
      * persisted values instead of re-running the step.
      */
-    public void markValidated(UUID organizationId, OrgType orgType, Set<String> enabledSections,
-                              Set<StepName> enabledSteps) {
+    public void markValidated(UUID organizationId, OrgType orgType, Set<StepName> enabledSteps) {
         this.organizationId = organizationId;
         this.orgType = orgType;
-        this.enabledSections = enabledSections;
         this.enabledSteps = enabledSteps;
     }
 

@@ -160,9 +160,9 @@ desyncs mid-flight.
 
 ## Conditional steps (SKIPPED)
 
-Not every step applies to every job. A step declares its applicability by
-overriding `boolean shouldRun(ProvisionContext)` on `ProvisionStep`
-(default `true`). Before each step, the orchestrator asks:
+A step declares its applicability by overriding `boolean shouldRun(ProvisionContext)`
+on `ProvisionStep` (default `true` — unconditional). Before each step
+the orchestrator asks:
 
 - `shouldRun == true` → execute normally (`IN_PROGRESS` → `SUCCESS`/`FAILED`).
 - `shouldRun == false` → `StepExecutor.skip(...)` records the row as
@@ -171,32 +171,34 @@ overriding `boolean shouldRun(ProvisionContext)` on `ProvisionStep`
 `SKIPPED` is a terminal, success-like state: it counts toward `progress`
 and never fails the job.
 
-**What drives the skip: the org type's config profile.** The request's
-`org_type` must exactly match one of the `OrgType` enum constants —
-`STANDARD` \| `INTERNAL` \| `ENTERPRISE` — validated by
-`INITIAL_REQUEST_VALIDATION` via `OrgType.valueOf(...)` (no case-insensitive
-or alias mapping). It selects a profile in
-[`default_config.json`](src/main/resources/default_config.json) (keyed by
-those same enum names), listing the enabled config *sections* for that
-tier. Each conditional step checks its section via
-`context.hasSection(...)` — a missing section means the step is skipped:
+**`org_type` gating is deliberately not a general-purpose, centrally-computed
+concern.** `ProvisionContext` doesn't expose a generic "enabled sections"
+lookup — it only carries the resolved `orgType` value itself. The only
+step pair that actually needs org-type-conditional behavior —
+`EnablePrmLicensesStep` / `DisablePrmLicensesStep`, which are mutually
+exclusive — reads `DefaultConfigProvider` directly, right in its own
+`shouldRun`:
 
-| Step | Section (`ConfigSections`) | STANDARD | INTERNAL | ENTERPRISE |
-|------|----------------------------|:----:|:--------:|:----------:|
-| `ASSIGN_FSP_RECOMMENDATION_MODELS`       | `recommendation_models`   | skip | skip | run |
-| `SETUP_DEFAULT_BRANDING_PRM_PREFERENCES` | `branding`                | run  | skip | run |
-| `SETUP_DEFAULT_RFS_UI_PRM_PREFERENCES`   | `rfs_ui_prm_preferences`  | run  | skip | run |
-| `SETUP_DEFAULT_CITATIONS`                | `citations`               | run  | skip | run |
-| `ENABLE_PRM_LICENSES`                    | `license` present         | run  | skip | run |
-| `DISABLE_PRM_LICENSES`                   | `license` **absent**      | skip | run  | skip |
-| `SETUP_FSP_BOOSTERS`                     | `boosters`                | skip | skip | run |
+```java
+@Override
+public boolean shouldRun(ProvisionContext context) {
+    return defaultConfigProvider.sectionsFor(context.getOrgType()).contains(ConfigSections.LICENSE);
+}
+```
 
-The `license` section shows the mutually exclusive idiom: when it is
-present the step *enables* licenses and the *disable* step is skipped;
-when absent, the reverse. `INITIAL_REQUEST_VALIDATION` always runs;
-whether every other step is even in play at all is decided first by
-`source` (below), *before* org type gating even applies — a step
-`source` didn't select never gets this far (see next section).
+[`default_config.json`](src/main/resources/default_config.json) maps
+each `OrgType` (`STANDARD` \| `INTERNAL` \| `ENTERPRISE`) to whether its
+`license` section is present:
+
+| Org type | `license` section | `ENABLE_PRM_LICENSES` | `DISABLE_PRM_LICENSES` |
+|----------|:------------------:|:----------------------:|:------------------------:|
+| `STANDARD`   | present | run  | skip |
+| `INTERNAL`   | absent  | skip | run  |
+| `ENTERPRISE` | present | run  | skip |
+
+Every other step is unconditional (`shouldRun` isn't overridden at
+all) — whether it runs is decided purely by `source` (next section);
+`org_type` has no say in it. `INITIAL_REQUEST_VALIDATION` always runs.
 Persisted `SKIPPED` rows carry no `started_at` or `duration_ms` — see
 [`docs/samples/db-rows.md`](docs/samples/db-rows.md).
 
@@ -225,13 +227,15 @@ selects — a step outside that set has **no row at all** and is
 **absent from `steps` entirely**, not reported `SKIPPED`. `progress` /
 `totalSteps` reflect only the steps actually configured for that
 source (e.g. `3`, not `13`, for `ETL_JOB`). Among the steps `source`
-*did* select, org-type gating (`shouldRun(context)`) still applies as
-usual — that's the only case where you'll still see `SKIPPED`.
-Execution order is untouched either way: steps `source` didn't select
-are simply never seeded in their normal catalog position, so relative
-order among the steps that *do* run is preserved (`ENABLE_PRM_LICENSES`
-still runs after `CREATE_ORG_IN_FSP`, with everything in between never
-appearing at all).
+*did* select, `shouldRun(context)` still applies as usual — in
+practice that only ever produces a `SKIPPED` result for
+`ENABLE_PRM_LICENSES`/`DISABLE_PRM_LICENSES` (the one org-type-gated
+pair; see [Conditional steps](#conditional-steps-skipped)), since every
+other step is unconditional. Execution order is untouched either way:
+steps `source` didn't select are simply never seeded in their normal
+catalog position, so relative order among the steps that *do* run is
+preserved (`ENABLE_PRM_LICENSES` still runs after `CREATE_ORG_IN_FSP`,
+with everything in between never appearing at all).
 
 ```bash
 # ETL_JOB: only INITIAL_REQUEST_VALIDATION, CREATE_ORG_IN_FSP, ENABLE_PRM_LICENSES run.
@@ -289,7 +293,7 @@ systems (and their step subsets) are expected to keep showing up.
 1. Create a new `@Component` implementing `com.example.provisioning.workflow.spi.ProvisionStep`.
 2. Return a new `StepName` enum value from `name()`, and a unique `order()` value gapped between existing steps (`10, 20, 30 …`).
 3. Add whatever downstream calls you need using constructor-injected clients.
-4. Optionally override `shouldRun(context)` to make the step conditional on org type — return `false` and it is recorded `SKIPPED` instead of executed.
+4. Optionally override `shouldRun(context)` to make the step conditional — return `false` and it is recorded `SKIPPED` instead of executed. If the condition depends on `org_type`, inject `DefaultConfigProvider` into the step and read it directly there (see `EnablePrmLicensesStep`) — `ProvisionContext` doesn't expose a generic "enabled sections" lookup, since most steps don't need one.
 5. Add the new `StepName` to whichever `source_config.json` entries should be able to trigger it — a source that doesn't list it never gets a row for it at all, so it won't appear in that source's job responses.
 
 The orchestrator discovers it automatically. `StepRegistry` fails the app at startup if `order()` collides with an existing step; `SourceStepConfigProvider` fails the app at startup if `source_config.json` references an unknown `StepName` — no other code changes required.

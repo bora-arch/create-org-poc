@@ -5,13 +5,13 @@ The workflow persists two tables (H2 in the POC): one job row in
 `organization_provision_step`. Below is a completed job created with
 `org_type = "STANDARD"` and `source = "DEFAULT"` (the unrestricted
 source — see [`source_config.json`](../../src/main/resources/source_config.json)).
-The `org_type` profile
-([`default_config.json`](../../src/main/resources/default_config.json))
-enables `branding`, `rfs_ui_prm_preferences`, `citations`, and
-`license` — so three steps are **skipped**:
-`ASSIGN_FSP_RECOMMENDATION_MODELS` (no `recommendation_models`),
-`DISABLE_PRM_LICENSES` (`license` present → enable runs instead), and
-`SETUP_FSP_BOOSTERS` (no `boosters`).
+`org_type` only ever affects `ENABLE_PRM_LICENSES`/`DISABLE_PRM_LICENSES`
+— the one mutually-exclusive pair that reads
+[`default_config.json`](../../src/main/resources/default_config.json)
+(via `DefaultConfigProvider`, injected directly into those two steps).
+`STANDARD`'s profile has `license`, so `ENABLE_PRM_LICENSES` runs and
+`DISABLE_PRM_LICENSES` is the only **skipped** step in the whole job —
+every other step is unconditional.
 
 Job id: `8b1b2f2c-4a11-4e7a-9c6b-7a1c3b2a0e11`
 `org_uid` (client-supplied, also the retry key): `3f2a9c14-7b41-4e2a-9c31-8a2f6d1eb7d2`
@@ -37,11 +37,9 @@ retry (`ProvisionWorkflowService.findOrCreateJob` only refreshes
 can't desync mid-flight from a request that later changes org type or
 source.
 
-**`source = "DEFAULT"` is what makes the 13-row table below meaningful
-as an org-type-gating example** — `DEFAULT`'s profile in
-`source_config.json` lists all 12 non-validation steps, so every one
-of them gets a row and org-type gating (`SKIPPED` vs. `SUCCESS`) is
-the only thing distinguishing them.
+**`source = "DEFAULT"` is what makes the 13-row table below possible
+at all** — `DEFAULT`'s profile in `source_config.json` lists all 12
+non-validation steps, so every one of them gets a row.
 
 A job created with `source = "ETL_JOB"` instead would **not** have 13
 rows with most of them `SKIPPED` — it would have exactly **3** rows,
@@ -68,25 +66,30 @@ report `totalSteps: 3`, never `13`. See
 | …-0000 | 8b1b2f2c-…-0e11 |   0 | INITIAL_REQUEST_VALIDATION              | SUCCESS     | 2026-07-07T10:15:02.080Z | 2026-07-07T10:15:02.100Z | 20  | | |
 | …-0001 | 8b1b2f2c-…-0e11 |  10 | CREATE_ORG_IN_FSP                      | SUCCESS     | 2026-07-07T10:15:02.110Z | 2026-07-07T10:15:02.290Z | 180 | | |
 | …-0002 | 8b1b2f2c-…-0e11 |  20 | SETUP_ORG_IN_FSP                       | SUCCESS     | 2026-07-07T10:15:02.300Z | 2026-07-07T10:15:02.480Z | 180 | | |
-| …-0003 | 8b1b2f2c-…-0e11 |  30 | ASSIGN_FSP_RECOMMENDATION_MODELS       | **SKIPPED** | *(null)*                 | 2026-07-07T10:15:02.490Z | *(null)* | | |
-| …-0004 | 8b1b2f2c-…-0e11 |  40 | SETUP_DEFAULT_BRANDING_PRM_PREFERENCES | SUCCESS     | 2026-07-07T10:15:02.500Z | 2026-07-07T10:15:02.690Z | 190 | | |
-| …-0005 | 8b1b2f2c-…-0e11 |  50 | SETUP_DEFAULT_PRM_PREFERENCES          | SUCCESS     | 2026-07-07T10:15:02.700Z | 2026-07-07T10:15:02.870Z | 170 | | |
-| …-0006 | 8b1b2f2c-…-0e11 |  60 | SETUP_DEFAULT_RFS_UI_PRM_PREFERENCES   | SUCCESS     | 2026-07-07T10:15:02.880Z | 2026-07-07T10:15:03.050Z | 170 | | |
-| …-0007 | 8b1b2f2c-…-0e11 |  70 | SETUP_DEFAULT_VOCABULARIES_IN_CE       | SUCCESS     | 2026-07-07T10:15:03.060Z | 2026-07-07T10:15:03.260Z | 200 | | |
-| …-0008 | 8b1b2f2c-…-0e11 |  80 | SETUP_DEFAULT_DATASOURCES_IN_FSP       | SUCCESS     | 2026-07-07T10:15:03.270Z | 2026-07-07T10:15:03.470Z | 200 | | |
-| …-0009 | 8b1b2f2c-…-0e11 |  90 | SETUP_DEFAULT_CITATIONS                | SUCCESS     | 2026-07-07T10:15:03.480Z | 2026-07-07T10:15:03.660Z | 180 | | |
-| …-0010 | 8b1b2f2c-…-0e11 | 100 | ENABLE_PRM_LICENSES                    | SUCCESS     | 2026-07-07T10:15:03.670Z | 2026-07-07T10:15:03.850Z | 180 | | |
-| …-0011 | 8b1b2f2c-…-0e11 | 110 | DISABLE_PRM_LICENSES                   | **SKIPPED** | *(null)*                 | 2026-07-07T10:15:03.860Z | *(null)* | | |
-| …-0012 | 8b1b2f2c-…-0e11 | 120 | SETUP_FSP_BOOSTERS                     | SUCCESS     | 2026-07-07T10:15:03.870Z | 2026-07-07T10:15:04.480Z | 610 | | |
+| …-0003 | 8b1b2f2c-…-0e11 |  30 | ASSIGN_FSP_RECOMMENDATION_MODELS       | SUCCESS     | 2026-07-07T10:15:02.490Z | 2026-07-07T10:15:02.670Z | 180 | | |
+| …-0004 | 8b1b2f2c-…-0e11 |  40 | SETUP_DEFAULT_BRANDING_PRM_PREFERENCES | SUCCESS     | 2026-07-07T10:15:02.680Z | 2026-07-07T10:15:02.870Z | 190 | | |
+| …-0005 | 8b1b2f2c-…-0e11 |  50 | SETUP_DEFAULT_PRM_PREFERENCES          | SUCCESS     | 2026-07-07T10:15:02.880Z | 2026-07-07T10:15:03.050Z | 170 | | |
+| …-0006 | 8b1b2f2c-…-0e11 |  60 | SETUP_DEFAULT_RFS_UI_PRM_PREFERENCES   | SUCCESS     | 2026-07-07T10:15:03.060Z | 2026-07-07T10:15:03.230Z | 170 | | |
+| …-0007 | 8b1b2f2c-…-0e11 |  70 | SETUP_DEFAULT_VOCABULARIES_IN_CE       | SUCCESS     | 2026-07-07T10:15:03.240Z | 2026-07-07T10:15:03.440Z | 200 | | |
+| …-0008 | 8b1b2f2c-…-0e11 |  80 | SETUP_DEFAULT_DATASOURCES_IN_FSP       | SUCCESS     | 2026-07-07T10:15:03.450Z | 2026-07-07T10:15:03.650Z | 200 | | |
+| …-0009 | 8b1b2f2c-…-0e11 |  90 | SETUP_DEFAULT_CITATIONS                | SUCCESS     | 2026-07-07T10:15:03.660Z | 2026-07-07T10:15:03.840Z | 180 | | |
+| …-0010 | 8b1b2f2c-…-0e11 | 100 | ENABLE_PRM_LICENSES                    | SUCCESS     | 2026-07-07T10:15:03.850Z | 2026-07-07T10:15:04.030Z | 180 | | |
+| …-0011 | 8b1b2f2c-…-0e11 | 110 | DISABLE_PRM_LICENSES                   | **SKIPPED** | *(null)*                 | 2026-07-07T10:15:04.040Z | *(null)* | | |
+| …-0012 | 8b1b2f2c-…-0e11 | 120 | SETUP_FSP_BOOSTERS                     | SUCCESS     | 2026-07-07T10:15:04.050Z | 2026-07-07T10:15:04.480Z | 430 | | |
 
-A `SKIPPED` row has **no `started_at`** and **no `duration_ms`**
-(the step never ran); only `finished_at` is stamped, marking when the
-skip decision was recorded. `error_code` / `error_message` stay null —
-a skip is not a failure.
+`DISABLE_PRM_LICENSES` is the only row here that's `SKIPPED` — its own
+`shouldRun` reads `DefaultConfigProvider.sectionsFor(STANDARD)`, sees
+`license` present, and returns `false` (the *enable* step applies
+instead). Every other row is `SUCCESS` unconditionally; none of their
+step classes override `shouldRun` at all. A `SKIPPED` row has **no
+`started_at`** and **no `duration_ms`** (the step never ran); only
+`finished_at` is stamped, marking when the skip decision was recorded.
+`error_code` / `error_message` stay null — a skip is not a failure.
 
-Other tiers resolve differently: `INTERNAL` skips every optional section
-(only the six core steps plus `DISABLE_PRM_LICENSES` run), while
-`ENTERPRISE` runs everything except `DISABLE_PRM_LICENSES`.
+`org_type = "INTERNAL"` would flip exactly one row: `ENABLE_PRM_LICENSES`
+becomes `SKIPPED` and `DISABLE_PRM_LICENSES` becomes `SUCCESS` (no
+`license` section for `INTERNAL`). Every other row is unaffected —
+`org_type` has no say over them.
 
 ## Retry / resume example
 

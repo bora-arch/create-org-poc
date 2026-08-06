@@ -39,22 +39,18 @@ class OrganizationControllerIT {
     @Autowired ObjectMapper objectMapper;
     @Autowired FlakyOncePrmPreferencesClient client;
 
-    // "STANDARD" (the default org type) enables branding, rfs_ui, citations,
-    // and license — so ASSIGN_FSP_RECOMMENDATION_MODELS, DISABLE_PRM_LICENSES,
-    // and SETUP_FSP_BOOSTERS are skipped. Uses source=DEFAULT, which selects
-    // every step, so only org_type gating is under test here.
-    private static final Set<String> STANDARD_SKIPPED = Set.of(
-        "ASSIGN_FSP_RECOMMENDATION_MODELS", "DISABLE_PRM_LICENSES", "SETUP_FSP_BOOSTERS");
+    // org_type only ever gates ENABLE_PRM_LICENSES/DISABLE_PRM_LICENSES —
+    // the one mutually-exclusive pair that still reads DefaultConfigProvider
+    // (see EnablePrmLicensesStep/DisablePrmLicensesStep). Every other step
+    // is unconditional once source=DEFAULT selects it.
+    // STANDARD's profile has "license" -> ENABLE runs, DISABLE is skipped.
+    private static final Set<String> STANDARD_SKIPPED = Set.of("DISABLE_PRM_LICENSES");
 
-    // internal enables no optional sections: everything conditional is
-    // skipped except DISABLE_PRM_LICENSES (license section is absent).
-    private static final Set<String> INTERNAL_SKIPPED = Set.of(
-        "ASSIGN_FSP_RECOMMENDATION_MODELS", "SETUP_DEFAULT_BRANDING_PRM_PREFERENCES",
-        "SETUP_DEFAULT_RFS_UI_PRM_PREFERENCES", "SETUP_DEFAULT_CITATIONS",
-        "ENABLE_PRM_LICENSES", "SETUP_FSP_BOOSTERS");
+    // INTERNAL's profile has no "license" -> DISABLE runs, ENABLE is skipped.
+    private static final Set<String> INTERNAL_SKIPPED = Set.of("ENABLE_PRM_LICENSES");
 
     @Test
-    void standardOrgType_skipsRecommendationDisableAndBoosters() throws Exception {
+    void standardOrgType_runsEnableLicensesSkipsDisableLicenses() throws Exception {
         JsonNode accepted = postOrganization(
             requestJson(newOrgUid(), "STANDARD", "DEFAULT", "sav20006@gmail.com", "ext-1"));
         UUID jobId = UUID.fromString(accepted.get("jobId").asText());
@@ -63,7 +59,7 @@ class OrganizationControllerIT {
     }
 
     @Test
-    void internalOrgType_skipsAllExternalSectionsAndRunsDisableLicenses() throws Exception {
+    void internalOrgType_runsDisableLicensesSkipsEnableLicenses() throws Exception {
         JsonNode accepted = postOrganization(
             requestJson(newOrgUid(), "INTERNAL", "DEFAULT", "sav20006@gmail.com", "ext-2"));
         UUID jobId = UUID.fromString(accepted.get("jobId").asText());
@@ -72,7 +68,7 @@ class OrganizationControllerIT {
     }
 
     @Test
-    void enterpriseOrgType_runsAllExceptDisableLicenses() throws Exception {
+    void enterpriseOrgType_runsEnableLicensesSkipsDisableLicenses() throws Exception {
         JsonNode accepted = postOrganization(
             requestJson(newOrgUid(), "ENTERPRISE", "DEFAULT", "sav20006@gmail.com", "ext-3"));
         UUID jobId = UUID.fromString(accepted.get("jobId").asText());
