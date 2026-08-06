@@ -11,28 +11,32 @@ import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Set;
 import java.util.UUID;
 import java.util.regex.Pattern;
 
 /**
- * Always the first step. Parses and validates the request's raw
+ * Always the first step, and — like every other step — executed
+ * asynchronously by the normal orchestrator loop; there is no separate
+ * synchronous validation path. Parses and validates the request's raw
  * {@code org_uid} / {@code org_type} / {@code source} / {@code service_user_account}
  * (structural presence is already enforced by bean validation on
  * {@link com.example.provisioning.api.dto.CreateOrganizationRequest};
  * this step checks the values are well-formed).
  *
- * <p>On success it publishes the resolved organization id, org type,
- * and enabled steps (per {@code source}) onto the {@link ProvisionContext}
- * via {@link ProvisionContext#markValidated} — every later step (or
- * the orchestrator, for {@code source}) relies on these. {@code orgType}
- * itself is published too, but this step does not resolve or attach
- * any org-type-derived config — that's a concern of the one step pair
- * that actually needs it (see {@code EnablePrmLicensesStep}), not this
- * one. On failure it throws {@link RequestValidationException}, which
+ * <p>Which steps have a row for this job at all — and therefore run —
+ * was already decided at job creation, straight from the raw
+ * {@code source} string (see {@code ProvisionWorkflowService#createJob}),
+ * so this step does not need to resolve {@code source} into a step set;
+ * it only needs to confirm {@code source} is one of the known values.
+ *
+ * <p>On success it publishes the resolved organization id and org type
+ * onto the {@link ProvisionContext} via {@link ProvisionContext#markValidated} —
+ * every later step relies on these. On failure it throws
+ * {@link RequestValidationException}, which
  * {@link com.example.provisioning.workflow.engine.StepFailureTranslator}
  * maps to a {@code VALIDATION_FAILED} step error; the orchestrator's
- * fail-fast halt then prevents any of the other steps from running.
+ * fail-fast halt then prevents any of the other steps from running,
+ * leaving them at their pre-seeded {@code NOT_STARTED}.
  */
 @Component
 @RequiredArgsConstructor
@@ -62,7 +66,7 @@ public class InitialRequestValidationStep implements ProvisionStep {
 
         UUID orgUid = parseOrgUid(context.getRawOrgUid(), violations);
         OrgType orgType = resolveOrgType(context.getRawOrgType(), violations);
-        String source = resolveSource(context.getRawSource(), violations);
+        validateSource(context.getRawSource(), violations);
         if (!isValidEmail(context.getServiceUserAccount())) {
             violations.add("service_user_account must be a valid email address");
         }
@@ -71,8 +75,7 @@ public class InitialRequestValidationStep implements ProvisionStep {
             throw new RequestValidationException(String.join("; ", violations));
         }
 
-        Set<StepName> enabledSteps = sourceStepConfigProvider.stepsFor(source);
-        context.markValidated(orgUid, orgType, enabledSteps);
+        context.markValidated(orgUid, orgType);
     }
 
     private UUID parseOrgUid(String rawOrgUid, List<String> violations) {
@@ -93,13 +96,11 @@ public class InitialRequestValidationStep implements ProvisionStep {
         }
     }
 
-    private String resolveSource(String rawSource, List<String> violations) {
+    private void validateSource(String rawSource, List<String> violations) {
         if (!sourceStepConfigProvider.isKnownSource(rawSource)) {
             violations.add("source must be one of: "
                 + String.join(", ", sourceStepConfigProvider.knownSources()));
-            return null;
         }
-        return rawSource;
     }
 
     private boolean isValidEmail(String value) {

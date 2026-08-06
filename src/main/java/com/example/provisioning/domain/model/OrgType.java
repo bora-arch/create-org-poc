@@ -1,10 +1,9 @@
 package com.example.provisioning.domain.model;
 
 /**
- * Organization tier. Selects which default-configuration profile
- * (see {@code default_config.json}) applies to a provisioning job,
- * which in turn decides which steps run and which are
- * {@link StepStatus#SKIPPED}.
+ * Organization tier. Validated by {@code INITIAL_REQUEST_VALIDATION}
+ * and persisted onto the job, but has no effect on which steps run —
+ * {@code source} is the only thing that gates step execution.
  */
 public enum OrgType {
     STANDARD,

@@ -1,14 +1,15 @@
 {
+  "_comment": "This is the immediate POST /organizations response — built right after every step row is seeded and the job is marked IN_PROGRESS, before the async run has actually started executing anything. Every step, including INITIAL_REQUEST_VALIDATION itself, is still NOT_STARTED; currentStep is null since markCurrentStep hasn't been called yet. If the request turns out to be invalid, this same 202/IN_PROGRESS shape is still what's returned here — the failure only becomes visible on a later GET.",
   "jobId": "8b1b2f2c-4a11-4e7a-9c6b-7a1c3b2a0e11",
   "orgUid": "3f2a9c14-7b41-4e2a-9c31-8a2f6d1eb7d2",
   "externalJobUid": "ext-job-482",
   "source": "DEFAULT",
   "status": "IN_PROGRESS",
-  "currentStep": "INITIAL_REQUEST_VALIDATION",
-  "progress": 1,
+  "currentStep": null,
+  "progress": 0,
   "totalSteps": 13,
   "steps": [
-    { "name": "INITIAL_REQUEST_VALIDATION",             "status": "SUCCESS" },
+    { "name": "INITIAL_REQUEST_VALIDATION",             "status": "NOT_STARTED" },
     { "name": "CREATE_ORG_IN_FSP",                      "status": "NOT_STARTED" },
     { "name": "SETUP_ORG_IN_FSP",                       "status": "NOT_STARTED" },
     { "name": "ASSIGN_FSP_RECOMMENDATION_MODELS",       "status": "NOT_STARTED" },
