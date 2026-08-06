@@ -1,11 +1,11 @@
 {
   "STANDARD": {
-    "sections": ["branding", "rfs_ui_prm_preferences", "citations", "license"]
+    "sections": ["license"]
   },
   "INTERNAL": {
     "sections": []
   },
   "ENTERPRISE": {
-    "sections": ["branding", "rfs_ui_prm_preferences", "citations", "license", "recommendation_models", "boosters"]
+    "sections": ["license"]
   }
 }

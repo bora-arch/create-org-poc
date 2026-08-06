@@ -72,12 +72,10 @@ classDiagram
         -externalJobUid : String
         -organizationId : UUID
         -orgType : OrgType
-        -enabledSections : Set
         -enabledSteps : Set~StepName~
         -attributes : Map
-        +hasSection(section) boolean
         +isStepEnabledForSource(step) boolean
-        +markValidated(orgId, orgType, sections, steps) void
+        +markValidated(orgId, orgType, steps) void
         +get(key, type) Optional
         +put(key, value) void
     }
@@ -85,6 +83,7 @@ classDiagram
     class DefaultConfigProvider {
         +sectionsFor(orgType) Set
     }
+    note for DefaultConfigProvider "Injected directly into EnablePrmLicensesStep/\nDisablePrmLicensesStep only — not into\nProvisionWorkflowService or ProvisionContext.\nThe only step pair that needs org_type reads it locally."
 
     class SourceStepConfigProvider {
         +isKnownSource(source) boolean
@@ -149,7 +148,6 @@ classDiagram
     ProvisionWorkflowService --> StepRegistry
     ProvisionWorkflowService --> StepExecutor
     ProvisionWorkflowService --> JobStateWriter
-    ProvisionWorkflowService --> DefaultConfigProvider
     ProvisionWorkflowService --> SourceStepConfigProvider
     StepRegistry o--> "*" ProvisionStep
     StepExecutor --> StepFailureTranslator
@@ -171,6 +169,8 @@ classDiagram
     ProvisionStep <|.. DisablePrmLicensesStep
     ProvisionStep <|.. SetupFspBoostersStep
     CreateOrgInFspStep --> ExternalOrganizationClient
+    EnablePrmLicensesStep --> DefaultConfigProvider
+    DisablePrmLicensesStep --> DefaultConfigProvider
 ```
 
 ## Sequence — successful workflow
@@ -214,7 +214,8 @@ sequenceDiagram
 
     AR->>WS: execute(jobId, ..., resumeFromOrder=10)
     WS->>DB: SELECT job (orgType, source)
-    WS->>WS: enabledSections = DefaultConfigProvider.sectionsFor(orgType)<br/>enabledSteps = SourceStepConfigProvider.stepsFor(source)
+    WS->>WS: enabledSteps = SourceStepConfigProvider.stepsFor(source)
+    Note over WS: orgType itself is passed into the context — WS never<br/>pre-computes anything from it; only ProvisionStep.shouldRun() reads it, per-step
     WS->>DB: UPDATE job status=IN_PROGRESS
     loop each step in registry.ordered() with order >= resumeFromOrder
         alt !isStepEnabledForSource(step)
@@ -222,8 +223,9 @@ sequenceDiagram
         else selected by source
             alt !step.shouldRun(ctx)
                 WS->>SE: skip(jobId, step)
+                Note over SE: only ENABLE_PRM_LICENSES/DISABLE_PRM_LICENSES ever return false here —<br/>every other step's shouldRun() defaults to true
                 SE->>DB: UPDATE step status=SKIPPED, finishedAt
-            else applies to this org type too
+            else step's own shouldRun() says yes
                 WS->>DB: UPDATE job currentStep=<name>
                 WS->>SE: execute(jobId, step, ctx)
                 SE->>DB: UPDATE step status=IN_PROGRESS, startedAt
@@ -302,7 +304,7 @@ sequenceDiagram
 
     Note over AR,DB: async
     AR->>WS: execute(jobId, ..., resumeFromOrder=30)
-    Note over WS: reconstructs orgType/source (and their derived enabledSections/enabledSteps)<br/>from the persisted job row — validation already succeeded, values are NOT re-read from this request
+    Note over WS: reconstructs orgType/source (and source's derived enabledSteps)<br/>from the persisted job row — validation already succeeded, values are NOT re-read from this request
     Note over WS: steps with order < 30 (INITIAL_REQUEST_VALIDATION, CREATE_ORG_IN_FSP, SETUP_ORG_IN_FSP) are skipped entirely — not re-executed
     WS->>DB: retry ASSIGN_FSP_RECOMMENDATION_MODELS, then continue through SETUP_FSP_BOOSTERS
     WS->>DB: UPDATE job status=SUCCESS
@@ -362,43 +364,50 @@ the job.
 The request's `org_type` must exactly match one of the `OrgType` enum
 constants (`STANDARD` / `INTERNAL` / `ENTERPRISE`) — `INITIAL_REQUEST_VALIDATION`
 parses it via `OrgType.valueOf(...)` (no case-insensitive or alias mapping)
-and publishes it onto the context via `markValidated`; `DefaultConfigProvider`
-resolves that type's enabled sections. Each later step's `shouldRun(ctx)`
-checks its section — a missing section means the step is skipped with no
-external call.
+and publishes it onto the context via `markValidated`. Unlike `source`,
+`org_type` is **not** pre-resolved into anything by the orchestrator —
+`ProvisionContext` just carries the raw `OrgType` value. Only
+`EnablePrmLicensesStep`/`DisablePrmLicensesStep` (mutually exclusive,
+the one pair that actually needs this) read `DefaultConfigProvider`
+themselves, directly inside their own `shouldRun(ctx)`. Every other
+step is unconditional — `shouldRun` isn't overridden, so it always
+returns the interface default `true`.
 
-Shown for `org_type = "STANDARD"`, whose profile has `license` but not
-`boosters`: `ENABLE_PRM_LICENSES` runs, `DISABLE_PRM_LICENSES` and
-`SETUP_FSP_BOOSTERS` are skipped.
+Shown for `org_type = "STANDARD"`, whose profile has `license`:
+`ENABLE_PRM_LICENSES` runs, `DISABLE_PRM_LICENSES` is skipped.
+`SETUP_FSP_BOOSTERS` (unconditional) always runs once `source` selects
+it, regardless of `org_type`.
 
 ```mermaid
 sequenceDiagram
     autonumber
     participant WS as ProvisionWorkflowService
+    participant Enable as EnablePrmLicensesStep
+    participant Disable as DisablePrmLicensesStep
     participant CFG as DefaultConfigProvider
-    participant Step as ProvisionStep
     participant SE as StepExecutor
     participant DB as H2
 
-    WS->>CFG: sectionsFor(STANDARD)
-    CFG-->>WS: {branding, rfs_ui_prm_preferences, citations, license}
-    Note over WS: context.enabledSections = ↑
+    Note over WS: WS itself never calls DefaultConfigProvider — only these two steps do, inside their own shouldRun()
 
-    WS->>Step: shouldRun(ctx)  [ENABLE_PRM_LICENSES → hasSection("license")]
-    Step-->>WS: true
+    WS->>Enable: shouldRun(ctx)
+    Enable->>CFG: sectionsFor(ctx.getOrgType())
+    CFG-->>Enable: {license}
+    Enable-->>WS: true  (contains "license")
     WS->>SE: execute(jobId, ENABLE_PRM_LICENSES, ctx)
     SE->>DB: UPDATE step status=IN_PROGRESS → SUCCESS
 
-    WS->>Step: shouldRun(ctx)  [DISABLE_PRM_LICENSES → !hasSection("license")]
-    Step-->>WS: false
+    WS->>Disable: shouldRun(ctx)
+    Disable->>CFG: sectionsFor(ctx.getOrgType())
+    CFG-->>Disable: {license}
+    Disable-->>WS: false  (license present → disable does not apply)
     WS->>SE: skip(jobId, DISABLE_PRM_LICENSES)
     SE->>DB: UPDATE step status=SKIPPED, finishedAt
 
-    WS->>Step: shouldRun(ctx)  [SETUP_FSP_BOOSTERS → hasSection("boosters")]
-    Step-->>WS: false
-    WS->>SE: skip(jobId, SETUP_FSP_BOOSTERS)
-    SE->>DB: UPDATE step status=SKIPPED, finishedAt
-    Note over WS,DB: execute() never called for skipped steps — no external request
+    Note over WS,DB: SETUP_FSP_BOOSTERS never calls DefaultConfigProvider — shouldRun defaults to true, so it always runs once source selects it
+    WS->>SE: execute(jobId, SETUP_FSP_BOOSTERS, ctx)
+    SE->>DB: UPDATE step status=IN_PROGRESS → SUCCESS
+    Note over WS,DB: execute() is never called for a SKIPPED step — no external request
 ```
 
 ## Sequence — source restricts which steps are even seeded

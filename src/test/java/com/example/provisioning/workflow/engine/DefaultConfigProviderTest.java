@@ -12,25 +12,19 @@ class DefaultConfigProviderTest {
     private final DefaultConfigProvider provider = new DefaultConfigProvider(new ObjectMapper());
 
     @Test
-    void standardEnablesBrandingRfsCitationsAndLicense() {
+    void standardEnablesLicense() {
         assertThat(provider.sectionsFor(OrgType.STANDARD))
-            .containsExactlyInAnyOrder(
-                ConfigSections.BRANDING,
-                ConfigSections.RFS_UI_PRM_PREFERENCES,
-                ConfigSections.CITATIONS,
-                ConfigSections.LICENSE);
+            .containsExactly(ConfigSections.LICENSE);
     }
 
     @Test
-    void internalEnablesNoOptionalSections() {
+    void internalEnablesNoSections() {
         assertThat(provider.sectionsFor(OrgType.INTERNAL)).isEmpty();
     }
 
     @Test
-    void enterpriseEnablesEverythingIncludingRecommendationsAndBoosters() {
+    void enterpriseEnablesLicense() {
         assertThat(provider.sectionsFor(OrgType.ENTERPRISE))
-            .contains(ConfigSections.RECOMMENDATION_MODELS, ConfigSections.BOOSTERS,
-                ConfigSections.LICENSE)
-            .doesNotContain("nonexistent");
+            .containsExactly(ConfigSections.LICENSE);
     }
 }
