@@ -1,6 +1,5 @@
 package com.example.provisioning.workflow.engine;
 
-import com.example.provisioning.domain.model.OrgType;
 import com.example.provisioning.domain.model.OrganizationProvisionJob;
 import com.example.provisioning.domain.model.OrganizationProvisionStep;
 import com.example.provisioning.domain.model.StepName;
@@ -18,6 +17,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 /**
  * Orchestrator. Finds-or-creates jobs (keyed by the client-supplied
@@ -30,25 +30,33 @@ import java.util.UUID;
  * {@link JobStateWriter} so each transition commits independently
  * and remains visible to concurrent GETs.
  *
- * <p>{@code INITIAL_REQUEST_VALIDATION} (always order {@code 0}) is
- * special: the controller runs it synchronously via
- * {@link #validateSynchronously} before handing off to async
- * execution, so an invalid request never starts the background
- * workflow and the caller gets an immediate FAILED response. Every
- * other step runs inside {@link #execute}, fail-fast: a step failure
- * halts the loop and leaves remaining steps {@code NOT_STARTED}. A
- * retry (same {@code org_uid}, job status {@code FAILED}) resumes at
- * the first non-terminal step instead of restarting the whole job.
+ * <p>Every step, including {@code INITIAL_REQUEST_VALIDATION} (always
+ * order {@code 0}), runs asynchronously through the normal
+ * {@link #execute} loop — there is no synchronous pre-validation
+ * step anymore. {@code POST /organizations} always returns
+ * {@code 202 Accepted} immediately (once the job is created/found and
+ * its rows are seeded); an invalid request only becomes visible as
+ * {@code status: FAILED} on a later {@code GET}. Execution is
+ * fail-fast: a step failure halts the loop and leaves remaining steps
+ * {@code NOT_STARTED}. A retry (same {@code org_uid}, job status
+ * {@code FAILED}) resumes at the first non-terminal step instead of
+ * restarting the whole job.
  *
- * <p>Only {@code INITIAL_REQUEST_VALIDATION} is pre-seeded at job
- * creation — {@code source} (and therefore which other steps even
- * apply) isn't known yet. Once validation resolves {@code source},
- * {@link #validateSynchronously} seeds exactly the steps
- * {@link SourceStepConfigProvider#stepsFor} selects, in catalog order.
- * A step outside that set never gets a row at all — it never appears
+ * <p>All of a job's step rows — {@code INITIAL_REQUEST_VALIDATION}
+ * plus every step {@link SourceStepConfigProvider#stepsFor} selects
+ * for the request's raw, not-yet-validated {@code source} string —
+ * are seeded {@code NOT_STARTED} at job creation (see {@link #createJob}),
+ * before any step has run, and topped up (idempotently) on any retry
+ * before validation has succeeded (see {@link #ensureStepsSeeded}) —
+ * covering a {@code source} the first attempt didn't recognize. A step
+ * outside the selected set never gets a row at all — it never appears
  * in {@code GET}/{@code POST} responses, rather than showing up as
  * {@code SKIPPED} — so the step list reported to a caller only ever
- * contains steps actually configured for that {@code source}.
+ * contains steps actually configured for that {@code source}. If
+ * {@code source} itself turns out to be unrecognized, {@code stepsFor}
+ * yields an empty set, so only {@code INITIAL_REQUEST_VALIDATION} is
+ * seeded — it is the one that will go on to report the "unknown
+ * source" validation error.
  */
 @Service
 @RequiredArgsConstructor
@@ -74,12 +82,11 @@ public class ProvisionWorkflowService {
      * validation; once later steps have run under a given org type /
      * source, changing either mid-flight would desync which steps were
      * actually gated by which rules. If not found, persists a new job
-     * with only {@code INITIAL_REQUEST_VALIDATION} pre-seeded as
-     * {@link StepStatus#NOT_STARTED} — the rest are seeded once
-     * {@code source} is resolved, see {@link #validateSynchronously}.
+     * and seeds every one of its step rows — see {@link #createJob}.
      */
     @Transactional
-    public OrganizationProvisionJob findOrCreateJob(String orgUid, String serviceUserAccount,
+    public OrganizationProvisionJob findOrCreateJob(String orgUid, String rawSource,
+                                                     String serviceUserAccount,
                                                      String externalJobUid) {
         return workflowRepository.findByOrgUid(orgUid)
             .map(job -> {
@@ -88,7 +95,7 @@ public class ProvisionWorkflowService {
                 workflowRepository.save(job);
                 return job;
             })
-            .orElseGet(() -> createJob(orgUid, serviceUserAccount, externalJobUid));
+            .orElseGet(() -> createJob(orgUid, rawSource, serviceUserAccount, externalJobUid));
     }
 
     /**
@@ -107,41 +114,6 @@ public class ProvisionWorkflowService {
     }
 
     /**
-     * Runs only {@code INITIAL_REQUEST_VALIDATION}, synchronously, on
-     * the calling thread. Returns {@code true} if the request is valid
-     * (org type and source, and source's derived enabled steps, are
-     * now resolved and persisted onto the job), {@code false} if it
-     * failed validation — in which case the job is already marked
-     * FAILED and the caller should respond with the current job state
-     * rather than starting async execution.
-     *
-     * <p>On success, seeds the step rows for exactly the steps
-     * {@code source} selects (see {@link #seedStepsForSource}) — this
-     * runs exactly once per job, since a job never re-enters this
-     * method once {@code INITIAL_REQUEST_VALIDATION} has succeeded.
-     */
-    public boolean validateSynchronously(UUID jobId, String rawOrgUid, String rawOrgType,
-                                         String rawSource, String serviceUserAccount,
-                                         String externalJobUid) {
-        ProvisionContext context = new ProvisionContext(
-            jobId, rawOrgUid, rawOrgType, rawSource, serviceUserAccount, externalJobUid);
-        ProvisionStep validationStep = validationStep();
-
-        jobStateWriter.markStarted(jobId);
-        jobStateWriter.markCurrentStep(jobId, validationStep.name());
-        try {
-            stepExecutor.execute(jobId, validationStep, context);
-            jobStateWriter.markValidationResolved(jobId, context.getOrgType(), rawSource);
-            seedStepsForSource(jobId, context.getEnabledSteps());
-            return true;
-        } catch (StepExecutionException halt) {
-            jobStateWriter.markFinished(jobId, WorkflowStatus.FAILED);
-            log.info("Job {} rejected: request validation failed", jobId);
-            return false;
-        }
-    }
-
-    /**
      * Marks the job IN_PROGRESS synchronously, on the calling thread,
      * right before handing off to {@link ProvisionWorkflowAsyncRunner}.
      * Without this, a response built immediately after triggering async
@@ -154,45 +126,58 @@ public class ProvisionWorkflowService {
 
     /**
      * Executes (or resumes) the workflow from {@code resumeFromOrder}
-     * onward. Steps with a lower order are left untouched — they are
-     * already SUCCESS from a prior attempt. Always called after
-     * {@link #validateSynchronously} has already succeeded (in this run
-     * or a previous one), so the job's {@code orgType} / {@code source}
-     * are guaranteed resolved.
+     * onward, including {@code INITIAL_REQUEST_VALIDATION} itself when
+     * {@code resumeFromOrder == 0} (a fresh job, or a retry of one that
+     * failed validation). Steps with a lower order are left untouched —
+     * they are already SUCCESS from a prior attempt.
      *
-     * <p>A step outside {@code source}'s selection has no row at all
-     * (see {@link #seedStepsForSource}) — it's silently skipped over in
-     * this loop, not touched via {@link StepExecutor}. Every step
-     * {@code source} did select always runs — {@code source} is the
-     * only gate; there is no further per-step business condition.
-     * Steps outside the set never having a row means relative execution
-     * order among the steps that do run is unaffected by source
-     * restricting the set.
+     * <p>If validation already succeeded in a previous attempt
+     * ({@code job.getOrgType()} is set), that step is skipped by
+     * {@code resumeFromOrder} and its resolved values are reconstructed
+     * from the job row instead of being re-parsed from the raw request.
+     * Otherwise this run's raw {@code org_type} is carried on the
+     * context for {@code INITIAL_REQUEST_VALIDATION} to parse when its
+     * turn comes, and {@link #ensureStepsSeeded} tops up this run's step
+     * rows from this attempt's raw {@code source} — covering a retry
+     * that corrects a {@code source} the very first attempt never
+     * recognized (so nothing beyond {@code INITIAL_REQUEST_VALIDATION}
+     * was seeded back then).
+     *
+     * <p>Only steps that actually have a row for this job are executed;
+     * the loop silently continues past any catalog step without one.
+     * Since seeding already filtered to exactly {@code source}'s
+     * selection, every step reached here always runs to completion —
+     * there is no further per-step business condition.
      */
-    public void execute(UUID jobId, String rawOrgUid, String serviceUserAccount,
-                        String externalJobUid, int resumeFromOrder) {
+    public void execute(UUID jobId, String rawOrgUid, String rawOrgType, String rawSource,
+                        String serviceUserAccount, String externalJobUid, int resumeFromOrder) {
         OrganizationProvisionJob job = workflowRepository.findById(jobId)
             .orElseThrow(() -> new IllegalStateException("Job not found: " + jobId));
-        OrgType orgType = job.getOrgType();
-        String source = job.getSource();
-        if (orgType == null || source == null) {
-            throw new IllegalStateException(
-                "Job " + jobId + " has no resolved orgType/source; validation must succeed before execute()");
-        }
-        Set<StepName> enabledSteps = sourceStepConfigProvider.stepsFor(source);
+
         ProvisionContext context = new ProvisionContext(
-            jobId, rawOrgUid, orgType.name(), source, serviceUserAccount, externalJobUid);
-        context.markValidated(UUID.fromString(job.getOrgUid()), orgType, enabledSteps);
+            jobId, rawOrgUid, rawOrgType, rawSource, serviceUserAccount, externalJobUid);
+        if (job.getOrgType() != null) {
+            context.markValidated(UUID.fromString(job.getOrgUid()), job.getOrgType());
+        } else {
+            ensureStepsSeeded(jobId, rawSource);
+        }
+
+        Set<StepName> seededSteps = stepRepository.findByJobIdOrderByStepOrder(jobId).stream()
+            .map(OrganizationProvisionStep::getStepName)
+            .collect(Collectors.toSet());
 
         jobStateWriter.markStarted(jobId);
         List<ProvisionStep> steps = stepRegistry.ordered();
         try {
             for (ProvisionStep step : steps) {
-                if (step.order() < resumeFromOrder || !context.isStepEnabledForSource(step.name())) {
+                if (step.order() < resumeFromOrder || !seededSteps.contains(step.name())) {
                     continue;
                 }
                 jobStateWriter.markCurrentStep(jobId, step.name());
                 stepExecutor.execute(jobId, step, context);
+                if (step.name() == StepName.INITIAL_REQUEST_VALIDATION) {
+                    jobStateWriter.markValidationResolved(jobId, context.getOrgType(), rawSource);
+                }
             }
             jobStateWriter.markFinished(jobId, WorkflowStatus.SUCCESS);
             log.info("Job {} succeeded ({} steps)", jobId, steps.size());
@@ -205,8 +190,8 @@ public class ProvisionWorkflowService {
         }
     }
 
-    private OrganizationProvisionJob createJob(String orgUid, String serviceUserAccount,
-                                               String externalJobUid) {
+    private OrganizationProvisionJob createJob(String orgUid, String rawSource,
+                                               String serviceUserAccount, String externalJobUid) {
         UUID jobId = UUID.randomUUID();
         OrganizationProvisionJob job = OrganizationProvisionJob.builder()
             .id(jobId)
@@ -216,30 +201,47 @@ public class ProvisionWorkflowService {
             .status(WorkflowStatus.PENDING)
             .build();
         workflowRepository.save(job);
-        seedStepRow(jobId, validationStep());
+        ensureStepsSeeded(jobId, rawSource);
         log.info("Created provisioning job {} for org_uid '{}'", jobId, orgUid);
         return job;
     }
 
     /**
-     * Seeds one {@link StepStatus#NOT_STARTED} row per catalog step
-     * that {@code enabledSteps} selects (in catalog order), skipping
-     * {@code INITIAL_REQUEST_VALIDATION} itself — already seeded by
-     * {@link #createJob}. Steps outside {@code enabledSteps} never get
-     * a row at all: they are absent from every response for this job,
-     * not reported as {@code SKIPPED}.
+     * Ensures a {@link StepStatus#NOT_STARTED} row exists for every step
+     * this job should have, straight from the request's raw (not yet
+     * validated) {@code source} string: {@code INITIAL_REQUEST_VALIDATION}
+     * unconditionally, plus one row per catalog step
+     * {@link SourceStepConfigProvider#stepsFor} selects for {@code rawSource},
+     * in catalog order. Steps outside that set never get a row at all:
+     * they are absent from every response for this job, not reported
+     * as {@code SKIPPED}. An unrecognized {@code rawSource} yields an
+     * empty selection, so only {@code INITIAL_REQUEST_VALIDATION} is
+     * seeded — it is what will go on to report the "unknown source"
+     * validation error once it runs.
+     *
+     * <p>Idempotent — only inserts rows that don't already exist — so
+     * it's safe to call again on a retry whose raw {@code source} has
+     * changed since a previous attempt that never got past validation
+     * (e.g. correcting a {@code source} the first attempt didn't
+     * recognize). It must never run once validation has actually
+     * succeeded (see the caller in {@link #execute}), since by then the
+     * job's step set is fixed and a later request changing {@code source}
+     * must not silently add or remove rows out from under it.
      */
-    private void seedStepsForSource(UUID jobId, Set<StepName> enabledSteps) {
+    private void ensureStepsSeeded(UUID jobId, String rawSource) {
+        Set<StepName> enabledSteps = sourceStepConfigProvider.stepsFor(rawSource);
+        Set<StepName> alreadySeeded = stepRepository.findByJobIdOrderByStepOrder(jobId).stream()
+            .map(OrganizationProvisionStep::getStepName)
+            .collect(Collectors.toSet());
         List<OrganizationProvisionStep> rows = stepRegistry.ordered().stream()
-            .filter(step -> step.name() != StepName.INITIAL_REQUEST_VALIDATION)
-            .filter(step -> enabledSteps.contains(step.name()))
+            .filter(step -> step.name() == StepName.INITIAL_REQUEST_VALIDATION
+                || enabledSteps.contains(step.name()))
+            .filter(step -> !alreadySeeded.contains(step.name()))
             .map(step -> newStepRow(jobId, step))
             .toList();
-        stepRepository.saveAll(rows);
-    }
-
-    private void seedStepRow(UUID jobId, ProvisionStep step) {
-        stepRepository.save(newStepRow(jobId, step));
+        if (!rows.isEmpty()) {
+            stepRepository.saveAll(rows);
+        }
     }
 
     private OrganizationProvisionStep newStepRow(UUID jobId, ProvisionStep step) {
@@ -250,13 +252,5 @@ public class ProvisionWorkflowService {
             .stepName(step.name())
             .status(StepStatus.NOT_STARTED)
             .build();
-    }
-
-    private ProvisionStep validationStep() {
-        return stepRegistry.ordered().stream()
-            .filter(step -> step.name() == StepName.INITIAL_REQUEST_VALIDATION)
-            .findFirst()
-            .orElseThrow(() -> new IllegalStateException(
-                "INITIAL_REQUEST_VALIDATION step not registered"));
     }
 }

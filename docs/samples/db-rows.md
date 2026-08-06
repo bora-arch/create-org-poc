@@ -24,12 +24,15 @@ Job id: `8b1b2f2c-4a11-4e7a-9c6b-7a1c3b2a0e11`
 successful run that's the final entry in the catalog for this job's
 source.
 
-`org_type` and `source` both start `NULL` and are only set once
-`INITIAL_REQUEST_VALIDATION` succeeds
+The job row's `org_type` and `source` **columns** both start `NULL`
+and are only set once `INITIAL_REQUEST_VALIDATION` succeeds
 (`JobStateWriter.markValidationResolved`) — a job that failed at
 validation has `org_type = NULL`, `source = NULL`, and
-`status = FAILED`. Once resolved, neither is overwritten by a later
-retry (`ProvisionWorkflowService.findOrCreateJob` only refreshes
+`status = FAILED`, even though (as below) its `organization_provision_step`
+rows were already seeded straight from the request's raw `source`
+string at creation, before validation ever ran. Once the columns are
+resolved, neither is overwritten by a later retry
+(`ProvisionWorkflowService.findOrCreateJob` only refreshes
 `service_user_account` / `external_job_uid`) — a job's step selection
 can't desync mid-flight from a request that later changes org type or
 source.
@@ -40,9 +43,11 @@ non-validation steps, so every one of them gets a row.
 
 A job created with `source = "ETL_JOB"` instead would **not** have 13
 rows — it would have exactly **3** rows, period, because
-`seedStepsForSource` only ever inserts a row for a step in the
-source's allow-list (`CREATE_ORG_IN_FSP` and `ENABLE_PRM_LICENSES`,
-plus the always-seeded `INITIAL_REQUEST_VALIDATION`):
+`ensureStepsSeeded` (called from `createJob`, straight from the
+request's raw `source` string, before `INITIAL_REQUEST_VALIDATION`
+itself has run) only ever inserts a row for a step in the source's
+allow-list (`CREATE_ORG_IN_FSP` and `ENABLE_PRM_LICENSES`, plus the
+always-seeded `INITIAL_REQUEST_VALIDATION`):
 
 | id | job_id | step_order | step_name | status |
 |----|--------|-----------:|-----------|--------|

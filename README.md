@@ -1,6 +1,6 @@
 # create-org-poc
 
-Production-shaped POC of an **Organization Provisioning Workflow** built with Java 21, Spring Boot 3, and the **Orchestrator pattern**. A REST endpoint accepts a create/retry request, validates it (`INITIAL_REQUEST_VALIDATION`, synchronously), and drives a sequence of up to 12 further external calls asynchronously while persisting per-step progress to H2. `org_uid` doubles as the idempotency/retry key: resubmitting the same `org_uid` after a failure resumes the job at its failed step (fail-fast — later steps never ran) instead of starting over. The request's `source` (e.g. `ETL_JOB`, `ADMIN_APP`) is the **only** thing that decides which steps even run for a job — see [Restricting steps by source](#restricting-steps-by-source-source_configjson). Every step `source` selects always executes; there is no further per-step business condition. A GET endpoint returns full workflow state — completed steps, the failed step (if any), remaining `NOT_STARTED` steps, and progress — for a UI to render.
+Production-shaped POC of an **Organization Provisioning Workflow** built with Java 21, Spring Boot 3, and the **Orchestrator pattern**. A REST endpoint accepts a create/retry request, seeds every step row the job will ever have, and returns `202 Accepted` immediately — every step, including `INITIAL_REQUEST_VALIDATION` itself, executes **asynchronously** while persisting per-step progress to H2. `org_uid` doubles as the idempotency/retry key: resubmitting the same `org_uid` after a failure resumes the job at its failed step (fail-fast — later steps never ran) instead of starting over. The request's `source` (e.g. `ETL_JOB`, `ADMIN_APP`) is resolved from the raw request at job creation and is the **only** thing that decides which steps even run for a job — see [Restricting steps by source](#restricting-steps-by-source-source_configjson). Every step `source` selects always executes; there is no further per-step business condition. A GET endpoint returns full workflow state — completed steps, the failed step (if any), remaining `NOT_STARTED` steps, and progress — for a UI to render.
 
 ## Run
 
@@ -45,9 +45,9 @@ curl -sS -X POST http://localhost:8080/organizations \
 
 All five fields are required. `org_type` must exactly match one of the `OrgType` enum constants: `STANDARD` \| `INTERNAL` \| `ENTERPRISE` — it's validated and persisted onto the job, but doesn't currently affect which steps run or how they behave (no step reads it). `source` identifies the calling system (e.g. `DEFAULT`, `ETL_JOB`, `ADMIN_APP`) and is the sole gate deciding which steps are even in play at all — see [Restricting steps by source](#restricting-steps-by-source-source_configjson). `org_uid` is also the **idempotency/retry key**: resubmitting the same request body (or a corrected one) after a failure resumes that job at its failed step instead of creating a new one — see [Retrying a failed job](#retrying-a-failed-job).
 
-`INITIAL_REQUEST_VALIDATION` always runs first, and runs **synchronously** on the request thread — format/semantic errors (e.g. `org_uid` isn't a UUID, `org_type` isn't recognized, `source` isn't configured) never start the async workflow; the call returns immediately with `status: FAILED` and the validation error (see below). A structurally invalid request (a required field missing/blank) still gets a plain `400` (see [API docs](#api-docs-openapi--swagger)).
+`INITIAL_REQUEST_VALIDATION` always runs first — and, like every other step, **asynchronously**. There is no synchronous validation path: this call always seeds every step row `source` selects (straight from the request's raw, not-yet-validated `source` string — see [Restricting steps by source](#restricting-steps-by-source-source_configjson)) and returns `202 Accepted` immediately. A request with a format/semantic error (e.g. `org_uid` isn't a UUID, `org_type` isn't recognized, `source` isn't configured) is **not** rejected synchronously — the caller only learns about it by polling `GET /organization-provision-jobs/{jobId}` and seeing `status: FAILED` once the async run actually reaches (and fails) `INITIAL_REQUEST_VALIDATION`. A structurally invalid request (a required field missing/blank) still gets a plain `400` synchronously (see [API docs](#api-docs-openapi--swagger)) — that check runs before a job even exists.
 
-If the request is valid, returns `202 Accepted` with the current snapshot (already reflecting `INITIAL_REQUEST_VALIDATION: SUCCESS`, everything else still queued):
+Returns `202 Accepted` with the current snapshot — every step `source` selects already has a `NOT_STARTED` row, even though none has necessarily executed yet:
 
 ```json
 {
@@ -56,28 +56,38 @@ If the request is valid, returns `202 Accepted` with the current snapshot (alrea
   "externalJobUid": "ext-job-482",
   "source": "DEFAULT",
   "status": "IN_PROGRESS",
-  "currentStep": "INITIAL_REQUEST_VALIDATION",
-  "progress": 1,
-  "totalSteps": 13
+  "currentStep": null,
+  "progress": 0,
+  "totalSteps": 13,
+  "steps": [
+    { "name": "INITIAL_REQUEST_VALIDATION",             "status": "NOT_STARTED" },
+    { "name": "CREATE_ORG_IN_FSP",                      "status": "NOT_STARTED" },
+    { "name": "SETUP_ORG_IN_FSP",                       "status": "NOT_STARTED" }
+  ]
 }
 ```
 
-If validation fails, returns `200 OK` (the job is already terminal — nothing was started). Since `source` is never resolved when validation fails, no other step rows exist either — `steps` has exactly one entry, not twelve `NOT_STARTED` placeholders:
+If the request turns out to be invalid, a later `GET` shows it — `status: FAILED`, `INITIAL_REQUEST_VALIDATION` itself `FAILED` with the validation error, and every other seeded step still `NOT_STARTED` (fail-fast — they were never reached):
 
 ```json
 {
   "jobId": "8b1b2f2c-4a11-4e7a-9c6b-7a1c3b2a0e11",
   "orgUid": "not-a-uuid",
   "externalJobUid": "ext-job-482",
+  "source": "DEFAULT",
   "status": "FAILED",
   "currentStep": "INITIAL_REQUEST_VALIDATION",
   "progress": 1,
-  "totalSteps": 1,
+  "totalSteps": 13,
   "steps": [
-    { "name": "INITIAL_REQUEST_VALIDATION", "status": "FAILED", "errorCode": "VALIDATION_FAILED", "errorMessage": "org_uid must be a valid UUID" }
+    { "name": "INITIAL_REQUEST_VALIDATION", "status": "FAILED", "errorCode": "VALIDATION_FAILED", "errorMessage": "org_uid must be a valid UUID" },
+    { "name": "CREATE_ORG_IN_FSP",          "status": "NOT_STARTED" },
+    { "name": "SETUP_ORG_IN_FSP",           "status": "NOT_STARTED" }
   ]
 }
 ```
+
+If `source` itself is the invalid field, there's no known step set to seed — `steps` has exactly one entry (`INITIAL_REQUEST_VALIDATION`, `FAILED`), not twelve `NOT_STARTED` placeholders.
 
 ### Poll workflow state
 
@@ -143,9 +153,9 @@ curl -sS -X POST http://localhost:8080/organizations \
   -d '{"org_uid":"3f2a9c14-7b41-4e2a-9c31-8a2f6d1eb7d2","org_type":"STANDARD","source":"DEFAULT","service_user_account":"sav20006@gmail.com","external_job_uid":"ext-job-482"}'
 ```
 
-The workflow **resumes at the failed step** — steps that already
-`SUCCESS`/`SKIPPED` on the previous attempt are not re-run. If the job
-is still `IN_PROGRESS` or already `SUCCESS`, the same `org_uid` is not
+The workflow **resumes at the failed step** — steps already `SUCCESS`
+on the previous attempt are not re-run. If the job is still
+`IN_PROGRESS` or already `SUCCESS`, the same `org_uid` is not
 restarted; the current snapshot is returned as-is (`200 OK`).
 
 `service_user_account` / `external_job_uid` can be corrected on a retry
@@ -175,14 +185,21 @@ single source of truth, mapping each `source` to the exact
 ```
 
 `INITIAL_REQUEST_VALIDATION` is never listed — it always runs first
-regardless of source, since it is what validates `source` itself. Once
-it succeeds, a step row is only ever *created* for steps `source`
-selects — a step outside that set has **no row at all** and is
-**absent from `steps` entirely**. `progress` / `totalSteps` reflect
-only the steps actually configured for that source (e.g. `3`, not
-`13`, for `ETL_JOB`). Every step `source` *did* select always runs to
-completion (`SUCCESS`/`FAILED`) — `ProvisionStep` has no per-step
-business gate of its own, so there's nothing else that could stop it.
+regardless of source, since it is what validates `source` itself (it's
+seeded unconditionally too, so it can report that failure). A step row
+is *created* for every step `source` selects **at job creation**,
+straight from the request's raw `source` string — before
+`INITIAL_REQUEST_VALIDATION` has even run, since every step now
+executes asynchronously (see [Kick off a provisioning workflow](#kick-off-a-provisioning-workflow)).
+A step outside that set has **no row at all** and is **absent from
+`steps` entirely**. `progress` / `totalSteps` reflect only the steps
+actually configured for that source (e.g. `3`, not `13`, for
+`ETL_JOB`). If `source` itself is unrecognized, there's no step set to
+seed, so only `INITIAL_REQUEST_VALIDATION` gets a row — it's the one
+that goes on to fail with the "unknown source" error. Every step
+`source` *did* select always runs to completion (`SUCCESS`/`FAILED`)
+— `ProvisionStep` has no per-step business gate of its own, so
+there's nothing else that could stop it.
 Execution order is untouched either way: steps `source` didn't select
 are simply never seeded in their normal catalog position, so relative
 order among the steps that *do* run is preserved (`ENABLE_PRM_LICENSES`
@@ -224,8 +241,12 @@ above, which has thirteen:
 ```
 
 An unconfigured `source` is a validation failure — `INITIAL_REQUEST_VALIDATION`
-fails with `"source must be one of: DEFAULT, ETL_JOB, ADMIN_APP"`
-(the same synchronous-rejection shape as an invalid `org_uid`/`org_type`).
+fails with `"source must be one of: DEFAULT, ETL_JOB, ADMIN_APP"`, visible
+via a later `GET` (same as any other validation error — see
+[Kick off a provisioning workflow](#kick-off-a-provisioning-workflow)).
+Since the raw `source` string itself was unrecognized, there was no step
+set to seed at job creation — `steps` has exactly one entry
+(`INITIAL_REQUEST_VALIDATION`), not twelve `NOT_STARTED` placeholders.
 
 **Adding a new source is a config-only change:** add an entry to
 `source_config.json` with whatever `StepName`s it needs — no Java code

@@ -36,12 +36,21 @@ public class OpenApiConfig {
                 .description("""
                     Asynchronous, orchestrator-driven organization provisioning.
 
-                    `POST /organizations` accepts a create request, returns \
-                    `202 Accepted` with a job id, and drives a sequence of 12 \
-                    external provisioning steps in the background. \
+                    `POST /organizations` accepts a create/retry request, returns \
+                    `202 Accepted` with a job id, and drives every step — including \
+                    `INITIAL_REQUEST_VALIDATION` itself — asynchronously in the \
+                    background; an invalid request only becomes visible as \
+                    `status: FAILED` on a later poll, never in the POST response. \
+                    `source` (e.g. `DEFAULT`, `ETL_JOB`, `ADMIN_APP`) is resolved \
+                    from the raw request at job creation and determines every step \
+                    the job will ever run (`source_config.json`) — a step outside \
+                    that set never gets a row and never appears in any response for \
+                    the job. `org_type` is validated and persisted but has no effect \
+                    on which steps run. `org_uid` is the idempotency/retry key: \
+                    resubmitting it resumes a previously failed job at its failed \
+                    step (fail-fast — later steps never ran) instead of starting over. \
                     `GET /organization-provision-jobs/{jobId}` returns the full \
-                    workflow state — per-step status (including `SKIPPED` steps \
-                    that do not apply to the org tier), the current step, and \
+                    workflow state — per-step status, the current step, and \
                     progress — for a UI to poll and render.""")
                 .contact(new Contact()
                     .name("create-org-poc")

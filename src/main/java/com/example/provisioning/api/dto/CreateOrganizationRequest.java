@@ -34,8 +34,11 @@ public record CreateOrganizationRequest(
 
     @JsonProperty("source")
     @Schema(description = "Identifies the calling system; selects the fixed set of steps that "
-        + "system is allowed to trigger (source_config.json), independent of org_type. Must "
-        + "exactly match a configured source, e.g. DEFAULT, ETL_JOB, ADMIN_APP.",
+        + "system is allowed to trigger (source_config.json) — resolved from this raw value at "
+        + "job creation, before INITIAL_REQUEST_VALIDATION itself has run, independent of "
+        + "org_type. Must exactly match a configured source, e.g. DEFAULT, ETL_JOB, ADMIN_APP "
+        + "— an unrecognized value seeds no steps beyond INITIAL_REQUEST_VALIDATION, which will "
+        + "go on to fail asynchronously with a validation error.",
         example = "DEFAULT", requiredMode = Schema.RequiredMode.REQUIRED)
     @NotBlank @Size(max = 64) String source,
 

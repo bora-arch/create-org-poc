@@ -118,48 +118,97 @@ class OrganizationControllerIT {
     }
 
     @Test
-    void invalidOrgUid_isRejectedSynchronouslyWithFirstStepFailed() throws Exception {
-        MvcResult result = mockMvc.perform(post("/organizations")
-                .contentType(APPLICATION_JSON)
-                .content(requestJson("not-a-uuid", "STANDARD", "DEFAULT", "sav20006@gmail.com", "ext-4")))
-            .andExpect(status().isOk())
-            .andExpect(jsonPath("$.status").value("FAILED"))
-            .andExpect(jsonPath("$.externalJobUid").value("ext-4"))
-            .andExpect(jsonPath("$.steps[0].name").value("INITIAL_REQUEST_VALIDATION"))
-            .andExpect(jsonPath("$.steps[0].status").value("FAILED"))
-            .andExpect(jsonPath("$.steps[0].errorCode").value("VALIDATION_FAILED"))
-            .andReturn();
+    void invalidOrgUid_isRejectedAsynchronouslyWithFirstStepFailed() throws Exception {
+        JsonNode accepted = postOrganization(
+            requestJson("not-a-uuid", "STANDARD", "DEFAULT", "sav20006@gmail.com", "ext-4"));
+        UUID jobId = UUID.fromString(accepted.get("jobId").asText());
 
-        JsonNode body = objectMapper.readTree(result.getResponse().getContentAsString());
-        // source was never resolved (validation failed before it could be),
-        // so no other step rows exist at all — not even NOT_STARTED ones.
-        assertThat(body.get("steps")).hasSize(1);
+        JsonNode body = awaitStatus(jobId, "FAILED");
+        assertThat(body.get("externalJobUid").asText()).isEqualTo("ext-4");
+        assertThat(findStep(body, "INITIAL_REQUEST_VALIDATION").get("status").asText()).isEqualTo("FAILED");
+        assertThat(findStep(body, "INITIAL_REQUEST_VALIDATION").get("errorCode").asText())
+            .isEqualTo("VALIDATION_FAILED");
+        // source (DEFAULT) was still valid, so its steps were seeded NOT_STARTED
+        // at job creation, straight from the raw request — org_uid being invalid
+        // only fails the validation step itself, it doesn't stop seeding.
+        assertThat(body.get("steps")).hasSize(13);
         assertThat(body.get("progress").asInt()).isEqualTo(1);
-        assertThat(body.get("totalSteps").asInt()).isEqualTo(1);
-        assertThat(body.get("steps").get(0).get("errorMessage").asText())
+        assertThat(body.get("totalSteps").asInt()).isEqualTo(13);
+        assertThat(findStep(body, "CREATE_ORG_IN_FSP").get("status").asText()).isEqualTo("NOT_STARTED");
+        assertThat(findStep(body, "INITIAL_REQUEST_VALIDATION").get("errorMessage").asText())
             .contains("org_uid must be a valid UUID");
     }
 
     @Test
-    void invalidOrgType_isRejectedSynchronously() throws Exception {
-        mockMvc.perform(post("/organizations")
-                .contentType(APPLICATION_JSON)
-                .content(requestJson(newOrgUid(), "bogus-tier", "DEFAULT", "sav20006@gmail.com", "ext-5")))
-            .andExpect(status().isOk())
-            .andExpect(jsonPath("$.status").value("FAILED"))
-            .andExpect(jsonPath("$.steps[0].errorMessage").value(
-                org.hamcrest.Matchers.containsString("org_type must be one of")));
+    void invalidOrgType_isRejectedAsynchronously() throws Exception {
+        JsonNode accepted = postOrganization(
+            requestJson(newOrgUid(), "bogus-tier", "DEFAULT", "sav20006@gmail.com", "ext-5"));
+        UUID jobId = UUID.fromString(accepted.get("jobId").asText());
+
+        JsonNode body = awaitStatus(jobId, "FAILED");
+        assertThat(findStep(body, "INITIAL_REQUEST_VALIDATION").get("errorMessage").asText())
+            .contains("org_type must be one of");
     }
 
     @Test
-    void invalidSource_isRejectedSynchronously() throws Exception {
-        mockMvc.perform(post("/organizations")
-                .contentType(APPLICATION_JSON)
-                .content(requestJson(newOrgUid(), "STANDARD", "BOGUS_SOURCE", "sav20006@gmail.com", "ext-6")))
-            .andExpect(status().isOk())
-            .andExpect(jsonPath("$.status").value("FAILED"))
-            .andExpect(jsonPath("$.steps[0].errorMessage").value(
-                org.hamcrest.Matchers.containsString("source must be one of")));
+    void invalidSource_isRejectedAsynchronously() throws Exception {
+        JsonNode accepted = postOrganization(
+            requestJson(newOrgUid(), "STANDARD", "BOGUS_SOURCE", "sav20006@gmail.com", "ext-6"));
+        UUID jobId = UUID.fromString(accepted.get("jobId").asText());
+
+        JsonNode body = awaitStatus(jobId, "FAILED");
+        assertThat(findStep(body, "INITIAL_REQUEST_VALIDATION").get("errorMessage").asText())
+            .contains("source must be one of");
+        // source itself was unrecognized, so there was no step set to seed —
+        // only INITIAL_REQUEST_VALIDATION was ever seeded for this job.
+        assertThat(body.get("steps")).hasSize(1);
+        assertThat(body.get("totalSteps").asInt()).isEqualTo(1);
+    }
+
+    @Test
+    void retryCorrectingAnUnrecognizedSource_seedsAndRunsTheCorrectedSourcesSteps() throws Exception {
+        String orgUid = newOrgUid();
+        // First attempt: source itself is unrecognized, so only
+        // INITIAL_REQUEST_VALIDATION is ever seeded for the job.
+        JsonNode firstAccepted = postOrganization(
+            requestJson(orgUid, "STANDARD", "BOGUS_SOURCE", "sav20006@gmail.com", "ext-fix"));
+        UUID jobId = UUID.fromString(firstAccepted.get("jobId").asText());
+        JsonNode failedState = awaitStatus(jobId, "FAILED");
+        assertThat(failedState.get("steps")).hasSize(1);
+
+        // Retry with the same org_uid, now using a recognized source. The job's
+        // step rows must be topped up from this corrected source before
+        // execution resumes — otherwise validation would succeed but the loop
+        // would have no rows left to run, and the job would wrongly report
+        // SUCCESS after only ever having executed one step.
+        JsonNode retryAccepted = postOrganization(
+            requestJson(orgUid, "STANDARD", "ETL_JOB", "sav20006@gmail.com", "ext-fix"));
+        assertThat(retryAccepted.get("jobId").asText()).isEqualTo(jobId.toString());
+
+        JsonNode successState = awaitStatus(jobId, "SUCCESS");
+        assertThat(successState.get("steps")).hasSize(3);
+        assertThat(successState.get("progress").asInt()).isEqualTo(3);
+        assertThat(successState.get("totalSteps").asInt()).isEqualTo(3);
+        assertThat(findStep(successState, "CREATE_ORG_IN_FSP").get("status").asText()).isEqualTo("SUCCESS");
+        assertThat(findStep(successState, "ENABLE_PRM_LICENSES").get("status").asText()).isEqualTo("SUCCESS");
+    }
+
+    @Test
+    void allStepsAreSeededNotStartedImmediatelyAtCreation() throws Exception {
+        JsonNode accepted = postOrganization(
+            requestJson(newOrgUid(), "STANDARD", "DEFAULT", "sav20006@gmail.com", "ext-seed"));
+        UUID jobId = UUID.fromString(accepted.get("jobId").asText());
+        // The POST response itself is built right after seeding + markResuming,
+        // so even before any step has actually run, every source-selected row
+        // already exists — either NOT_STARTED or already IN_PROGRESS/SUCCESS
+        // if the async loop raced ahead of this assertion.
+        assertThat(accepted.get("steps")).hasSize(13);
+        assertThat(accepted.get("totalSteps").asInt()).isEqualTo(13);
+
+        // Drain the async run to completion before returning — otherwise this
+        // job's background execution races the next test's use of the shared
+        // FlakyOncePrmPreferencesClient bean.
+        awaitAllStepsSucceed(jobId);
     }
 
     @Test
