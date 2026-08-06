@@ -14,10 +14,10 @@ flowchart TB
 
     subgraph workflow["workflow"]
         subgraph spi["workflow.spi"]
-            step_iface["ProvisionStep<br/>ProvisionContext<br/>ConfigSections"]
+            step_iface["ProvisionStep<br/>ProvisionContext"]
         end
         subgraph engine["workflow.engine"]
-            orch["ProvisionWorkflowService<br/>ProvisionWorkflowAsyncRunner<br/>StepExecutor<br/>StepRegistry<br/>StepFailureTranslator<br/>JobStateWriter<br/>DefaultConfigProvider<br/>SourceStepConfigProvider"]
+            orch["ProvisionWorkflowService<br/>ProvisionWorkflowAsyncRunner<br/>StepExecutor<br/>StepRegistry<br/>StepFailureTranslator<br/>JobStateWriter<br/>SourceStepConfigProvider"]
         end
         subgraph steps["workflow.steps"]
             step_beans["13 concrete steps (INITIAL_REQUEST_VALIDATION + 12)"]
@@ -60,7 +60,6 @@ classDiagram
         +name() StepName
         +order() int
         +execute(ctx) void
-        +shouldRun(ctx) boolean
     }
 
     class ProvisionContext {
@@ -79,11 +78,6 @@ classDiagram
         +get(key, type) Optional
         +put(key, value) void
     }
-
-    class DefaultConfigProvider {
-        +sectionsFor(orgType) Set
-    }
-    note for DefaultConfigProvider "Injected directly into EnablePrmLicensesStep/\nDisablePrmLicensesStep only — not into\nProvisionWorkflowService or ProvisionContext.\nThe only step pair that needs org_type reads it locally."
 
     class SourceStepConfigProvider {
         +isKnownSource(source) boolean
@@ -169,8 +163,6 @@ classDiagram
     ProvisionStep <|.. DisablePrmLicensesStep
     ProvisionStep <|.. SetupFspBoostersStep
     CreateOrgInFspStep --> ExternalOrganizationClient
-    EnablePrmLicensesStep --> DefaultConfigProvider
-    DisablePrmLicensesStep --> DefaultConfigProvider
 ```
 
 ## Sequence — successful workflow
@@ -215,26 +207,20 @@ sequenceDiagram
     AR->>WS: execute(jobId, ..., resumeFromOrder=10)
     WS->>DB: SELECT job (orgType, source)
     WS->>WS: enabledSteps = SourceStepConfigProvider.stepsFor(source)
-    Note over WS: orgType itself is passed into the context — WS never<br/>pre-computes anything from it; only ProvisionStep.shouldRun() reads it, per-step
+    Note over WS: orgType is still resolved and carried on the context,<br/>but no step reads it — source is the only thing that gates execution
     WS->>DB: UPDATE job status=IN_PROGRESS
     loop each step in registry.ordered() with order >= resumeFromOrder
         alt !isStepEnabledForSource(step)
             WS->>WS: continue — no row exists for this step, nothing to update
         else selected by source
-            alt !step.shouldRun(ctx)
-                WS->>SE: skip(jobId, step)
-                Note over SE: only ENABLE_PRM_LICENSES/DISABLE_PRM_LICENSES ever return false here —<br/>every other step's shouldRun() defaults to true
-                SE->>DB: UPDATE step status=SKIPPED, finishedAt
-            else step's own shouldRun() says yes
-                WS->>DB: UPDATE job currentStep=<name>
-                WS->>SE: execute(jobId, step, ctx)
-                SE->>DB: UPDATE step status=IN_PROGRESS, startedAt
-                SE->>Step: execute(ctx)
-                Step->>Ext: <method>()
-                Ext-->>Step: result
-                Step-->>SE: return
-                SE->>DB: UPDATE step status=SUCCESS, finishedAt, duration
-            end
+            WS->>DB: UPDATE job currentStep=<name>
+            WS->>SE: execute(jobId, step, ctx)
+            SE->>DB: UPDATE step status=IN_PROGRESS, startedAt
+            SE->>Step: execute(ctx)
+            Step->>Ext: <method>()
+            Ext-->>Step: result
+            Step-->>SE: return
+            SE->>DB: UPDATE step status=SUCCESS, finishedAt, duration
         end
     end
     WS->>DB: UPDATE job status=SUCCESS, finishedAt
@@ -340,84 +326,29 @@ stateDiagram-v2
 ```mermaid
 stateDiagram-v2
     [*] --> NOT_STARTED : pre-seed
-    NOT_STARTED --> IN_PROGRESS : StepExecutor.execute (shouldRun == true)
-    NOT_STARTED --> SKIPPED : StepExecutor.skip (shouldRun == false)
+    NOT_STARTED --> IN_PROGRESS : StepExecutor.execute
     IN_PROGRESS --> SUCCESS : step returns
     IN_PROGRESS --> FAILED : step throws
     SUCCESS --> [*]
     FAILED --> [*]
-    SKIPPED --> [*]
 ```
 
 A step is pre-seeded `NOT_STARTED` **only if `source` selected it** —
 see the seeding sequence below. Steps outside that set never enter
 this state machine at all; there's no row, so there's no status to
-report. For a seeded step, when the orchestrator reaches it,
-`ProvisionStep.shouldRun(context)` decides the branch: `true` → the
-step executes (`IN_PROGRESS` → `SUCCESS`/`FAILED`); `false` → the step
-is recorded `SKIPPED` and never invoked. `SKIPPED` is a terminal
-success-like state — it counts toward `progress` and does **not** fail
-the job.
-
-## Sequence — conditional skip (SKIPPED)
-
-The request's `org_type` must exactly match one of the `OrgType` enum
-constants (`STANDARD` / `INTERNAL` / `ENTERPRISE`) — `INITIAL_REQUEST_VALIDATION`
-parses it via `OrgType.valueOf(...)` (no case-insensitive or alias mapping)
-and publishes it onto the context via `markValidated`. Unlike `source`,
-`org_type` is **not** pre-resolved into anything by the orchestrator —
-`ProvisionContext` just carries the raw `OrgType` value. Only
-`EnablePrmLicensesStep`/`DisablePrmLicensesStep` (mutually exclusive,
-the one pair that actually needs this) read `DefaultConfigProvider`
-themselves, directly inside their own `shouldRun(ctx)`. Every other
-step is unconditional — `shouldRun` isn't overridden, so it always
-returns the interface default `true`.
-
-Shown for `org_type = "STANDARD"`, whose profile has `license`:
-`ENABLE_PRM_LICENSES` runs, `DISABLE_PRM_LICENSES` is skipped.
-`SETUP_FSP_BOOSTERS` (unconditional) always runs once `source` selects
-it, regardless of `org_type`.
-
-```mermaid
-sequenceDiagram
-    autonumber
-    participant WS as ProvisionWorkflowService
-    participant Enable as EnablePrmLicensesStep
-    participant Disable as DisablePrmLicensesStep
-    participant CFG as DefaultConfigProvider
-    participant SE as StepExecutor
-    participant DB as H2
-
-    Note over WS: WS itself never calls DefaultConfigProvider — only these two steps do, inside their own shouldRun()
-
-    WS->>Enable: shouldRun(ctx)
-    Enable->>CFG: sectionsFor(ctx.getOrgType())
-    CFG-->>Enable: {license}
-    Enable-->>WS: true  (contains "license")
-    WS->>SE: execute(jobId, ENABLE_PRM_LICENSES, ctx)
-    SE->>DB: UPDATE step status=IN_PROGRESS → SUCCESS
-
-    WS->>Disable: shouldRun(ctx)
-    Disable->>CFG: sectionsFor(ctx.getOrgType())
-    CFG-->>Disable: {license}
-    Disable-->>WS: false  (license present → disable does not apply)
-    WS->>SE: skip(jobId, DISABLE_PRM_LICENSES)
-    SE->>DB: UPDATE step status=SKIPPED, finishedAt
-
-    Note over WS,DB: SETUP_FSP_BOOSTERS never calls DefaultConfigProvider — shouldRun defaults to true, so it always runs once source selects it
-    WS->>SE: execute(jobId, SETUP_FSP_BOOSTERS, ctx)
-    SE->>DB: UPDATE step status=IN_PROGRESS → SUCCESS
-    Note over WS,DB: execute() is never called for a SKIPPED step — no external request
-```
+report. For a seeded step, when the orchestrator reaches it, it always
+executes (`IN_PROGRESS` → `SUCCESS`/`FAILED`) — `ProvisionStep` has no
+per-step business gate, so `source` selecting a step is the only
+condition that determines whether it runs.
 
 ## Sequence — source restricts which steps are even seeded
 
-Orthogonal to org-type gating above: the request's `source` selects
-the fixed set of steps that caller may trigger at all
-([`source_config.json`](../src/main/resources/source_config.json)),
-independent of `org_type` — and it does so at **seed time**, right
-after `INITIAL_REQUEST_VALIDATION` succeeds, not by marking excluded
-steps `SKIPPED` during execution. Shown for `source = "ETL_JOB"`,
+The request's `source` selects the fixed set of steps that caller may
+trigger at all
+([`source_config.json`](../src/main/resources/source_config.json)) —
+and it does so at **seed time**, right after
+`INITIAL_REQUEST_VALIDATION` succeeds, not by marking excluded steps
+some other status during execution. Shown for `source = "ETL_JOB"`,
 whose profile only lists `CREATE_ORG_IN_FSP` and `ENABLE_PRM_LICENSES`
 — every other step never gets a row at all, so it can never appear in
 a `GET`/`POST` response for this job, under any status. The two steps

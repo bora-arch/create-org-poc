@@ -95,7 +95,7 @@ public class ProvisionWorkflowService {
      * Order of the earliest step that has not reached a terminal state
      * (i.e. is {@code NOT_STARTED} or {@code FAILED}) — the point a
      * fresh run starts at, or a retry resumes from. {@code Integer.MAX_VALUE}
-     * if every step is already SUCCESS/SKIPPED (job already finished).
+     * if every step is already {@code SUCCESS} (job already finished).
      */
     @Transactional(readOnly = true)
     public int firstPendingStepOrder(UUID jobId) {
@@ -155,19 +155,19 @@ public class ProvisionWorkflowService {
     /**
      * Executes (or resumes) the workflow from {@code resumeFromOrder}
      * onward. Steps with a lower order are left untouched — they are
-     * already SUCCESS/SKIPPED from a prior attempt. Always called after
+     * already SUCCESS from a prior attempt. Always called after
      * {@link #validateSynchronously} has already succeeded (in this run
      * or a previous one), so the job's {@code orgType} / {@code source}
      * are guaranteed resolved.
      *
      * <p>A step outside {@code source}'s selection has no row at all
      * (see {@link #seedStepsForSource}) — it's silently skipped over in
-     * this loop, not touched via {@link StepExecutor}. A step that
-     * {@code source} did select still only runs if it is also
-     * applicable per its own {@link ProvisionStep#shouldRun} (org-type
-     * gating); failing that records it {@code SKIPPED}. Either way,
-     * relative execution order among the steps that do run is
-     * unaffected by source restricting the set.
+     * this loop, not touched via {@link StepExecutor}. Every step
+     * {@code source} did select always runs — {@code source} is the
+     * only gate; there is no further per-step business condition.
+     * Steps outside the set never having a row means relative execution
+     * order among the steps that do run is unaffected by source
+     * restricting the set.
      */
     public void execute(UUID jobId, String rawOrgUid, String serviceUserAccount,
                         String externalJobUid, int resumeFromOrder) {
@@ -189,10 +189,6 @@ public class ProvisionWorkflowService {
         try {
             for (ProvisionStep step : steps) {
                 if (step.order() < resumeFromOrder || !context.isStepEnabledForSource(step.name())) {
-                    continue;
-                }
-                if (!step.shouldRun(context)) {
-                    stepExecutor.skip(jobId, step);
                     continue;
                 }
                 jobStateWriter.markCurrentStep(jobId, step.name());

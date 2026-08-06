@@ -4,7 +4,7 @@ info:
   description: |-
     Asynchronous, orchestrator-driven organization provisioning.
 
-    `POST /organizations` accepts a create/retry request and drives a sequence of up to 13 provisioning steps — `INITIAL_REQUEST_VALIDATION` always first, then up to 12 further external provisioning steps. `org_uid` is the idempotency/retry key: resubmitting the same `org_uid` resumes a previously FAILED job at its failed step (fail-fast — later steps never ran) instead of starting over. `source` (e.g. `DEFAULT`, `ETL_JOB`, `ADMIN_APP`) independently restricts which steps are even seeded for the job at all (`source_config.json`) — a step outside that set never gets a row and is absent from every response, not reported `SKIPPED`; `org_type` only affects the one step pair whose own logic reads it (`ENABLE_PRM_LICENSES`/`DISABLE_PRM_LICENSES`, gated by `default_config.json`'s license section) — every other seeded step is unconditional. `INITIAL_REQUEST_VALIDATION` runs synchronously: an invalid request never starts the background workflow and the call returns immediately with `status: FAILED`, the `external_job_uid`, and the failed step's error (and, since `source` was never resolved, `steps` has exactly one entry). Otherwise the remaining steps run asynchronously and `202 Accepted` is returned. `GET /organization-provision-jobs/{jobId}` returns the full workflow state — per-step status for every step `source` selected (including `SKIPPED` ones that don't apply to the org tier), the current step, and progress — for a UI to poll and render.
+    `POST /organizations` accepts a create/retry request and drives a sequence of up to 13 provisioning steps — `INITIAL_REQUEST_VALIDATION` always first, then up to 12 further external provisioning steps. `org_uid` is the idempotency/retry key: resubmitting the same `org_uid` resumes a previously FAILED job at its failed step (fail-fast — later steps never ran) instead of starting over. `source` (e.g. `DEFAULT`, `ETL_JOB`, `ADMIN_APP`) is the only thing that decides which steps are even seeded for the job at all (`source_config.json`) — a step outside that set never gets a row and is absent from every response. `org_type` is validated and persisted onto the job, but has no effect on which steps run or how they behave — every seeded step is unconditional; there is no per-step business gate. `INITIAL_REQUEST_VALIDATION` runs synchronously: an invalid request never starts the background workflow and the call returns immediately with `status: FAILED`, the `external_job_uid`, and the failed step's error (and, since `source` was never resolved, `steps` has exactly one entry). Otherwise the remaining steps run asynchronously and `202 Accepted` is returned. `GET /organization-provision-jobs/{jobId}` returns the full workflow state — per-step status for every step `source` selected, the current step, and progress — for a UI to poll and render.
   contact:
     name: create-org-poc
     url: https://github.com/bora-arch/create-org-poc
@@ -71,10 +71,9 @@ paths:
       - Provision Jobs
       summary: Get provisioning job state
       description: "Returns the full workflow state for a job — overall status, the\
-        \ current step, progress, total steps, and the per-step list, scoped to the\
-        \ steps the job's source selected (including SKIPPED entries among those for\
-        \ steps that don't apply to the org tier — steps source never selected are\
-        \ absent from the list rather than SKIPPED)."
+        \ current step, progress, total steps, and the per-step list, scoped to exactly\
+        \ the steps the job's source selected — steps source never selected are absent\
+        \ from the list entirely."
       operationId: getJob
       parameters:
       - name: jobId
@@ -120,11 +119,10 @@ components:
           maxLength: 64
           minLength: 0
           type: string
-          description: Organization tier; only affects steps whose own logic reads
-            it — in practice just ENABLE_PRM_LICENSES/DISABLE_PRM_LICENSES, a
-            mutually-exclusive pair gated by default_config.json's license section.
-            Every other step is unconditional. Must exactly match one of the OrgType
-            enum constants: STANDARD, INTERNAL, ENTERPRISE.
+          description: Organization tier; validated and persisted onto the job, but
+            has no effect on which steps run or how they behave — no step reads it.
+            Must exactly match one of the OrgType enum constants: STANDARD, INTERNAL,
+            ENTERPRISE.
           example: STANDARD
         source:
           maxLength: 64

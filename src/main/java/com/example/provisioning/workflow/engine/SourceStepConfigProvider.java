@@ -25,13 +25,12 @@ import java.util.stream.Collectors;
  * always runs first regardless of source, since it is what validates
  * {@code source} itself.
  *
- * <p>Combined with {@link DefaultConfigProvider} (which gates steps by
- * org tier), a step only executes when it is both selected by the
- * request's {@code source} <em>and</em> applicable per
- * {@link com.example.provisioning.workflow.spi.ProvisionStep#shouldRun}.
- * Execution order is untouched — steps not selected for a source are
- * simply recorded {@code SKIPPED} in their normal catalog position, so
- * relative ordering among the steps that do run is preserved.
+ * <p>{@code source} is the only gate a step has to clear —
+ * {@link com.example.provisioning.workflow.spi.ProvisionStep} has no
+ * per-step business condition of its own. A step not selected for a
+ * source never gets a row at all (it's seeded based on this set), so
+ * it's absent from every response rather than recorded some other
+ * status; relative ordering among the steps that do run is preserved.
  *
  * <p>The file is the single source of truth for "which steps a source
  * may trigger": adding a new source, or changing an existing one's step

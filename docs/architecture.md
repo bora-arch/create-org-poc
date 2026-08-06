@@ -57,11 +57,11 @@ For POC simplicity the external call runs inside the step's transaction. Product
 
 ### 3a. Retry is a resume, not a restart
 
-`org_uid` (from the request) is the job's business key — `WorkflowRepository.findByOrgUid` looks it up on every `POST`. If no job exists, one is created (`INITIAL_REQUEST_VALIDATION` pre-seeded `NOT_STARTED`; the rest seeded once `source` resolves — see decision 2). If one exists and is `FAILED`, the same job is reused: `ProvisionWorkflowService.firstPendingStepOrder` finds the lowest-order step that is still `NOT_STARTED` or `FAILED`, and `execute(..., resumeFromOrder)` skips every step with a lower order — they are already `SUCCESS`/`SKIPPED` from a prior attempt — and resumes exactly at the failed one. Combined with fail-fast (steps after a failure are never touched, guaranteed by pre-seeding), this gives "resubmit the same request, it picks up where it left off" without a separate retry endpoint or extra state machine.
+`org_uid` (from the request) is the job's business key — `WorkflowRepository.findByOrgUid` looks it up on every `POST`. If no job exists, one is created (`INITIAL_REQUEST_VALIDATION` pre-seeded `NOT_STARTED`; the rest seeded once `source` resolves — see decision 2). If one exists and is `FAILED`, the same job is reused: `ProvisionWorkflowService.firstPendingStepOrder` finds the lowest-order step that is still `NOT_STARTED` or `FAILED`, and `execute(..., resumeFromOrder)` skips every step with a lower order — they are already `SUCCESS` from a prior attempt — and resumes exactly at the failed one. Combined with fail-fast (steps after a failure are never touched, guaranteed by pre-seeding), this gives "resubmit the same request, it picks up where it left off" without a separate retry endpoint or extra state machine.
 
 If the job is already `SUCCESS` or `IN_PROGRESS`, the same `org_uid` is not restarted — the current snapshot is returned as-is (`200 OK`).
 
-`findOrCreateJob` only refreshes `serviceUserAccount` / `externalJobUid` on an existing job — `orgType` and `source` are never overwritten there. Both are only ever persisted once by `markValidationResolved`, right after `INITIAL_REQUEST_VALIDATION` succeeds; a retry that changes either only takes effect while the job is still stuck at validation (i.e. the *first* attempt never got past it). This is deliberate: once later steps have actually executed under a given `org_type`/`source` combination, silently swapping either mid-flight on a later retry would desync which steps were gated by which rules — some already-`SKIPPED` rows would reflect the old rules, and steps newly enabled by the changed value would never get a chance to run since they're not the resume point.
+`findOrCreateJob` only refreshes `serviceUserAccount` / `externalJobUid` on an existing job — `orgType` and `source` are never overwritten there. Both are only ever persisted once by `markValidationResolved`, right after `INITIAL_REQUEST_VALIDATION` succeeds; a retry that changes either only takes effect while the job is still stuck at validation (i.e. the *first* attempt never got past it). This is deliberate: once later steps have actually executed under a given `org_type`/`source` combination, silently swapping either mid-flight on a later retry would desync which steps were seeded under which rules — steps newly enabled by a changed `source` would never get a chance to run, since they're not the resume point and were never seeded in the first place.
 
 ### 4. Async via a named `ThreadPoolTaskExecutor`, wrapped in a separate bean
 
@@ -75,23 +75,21 @@ If the job is already `SUCCESS` or `IN_PROGRESS`, the same `org_uid` is not rest
 
 The request's raw `org_uid` / `org_type` / `source` / `service_user_account` are validated by a real `ProvisionStep` (order `0`) rather than bean-validation annotations, so an invalid value is persisted and reported through the same step-failure machinery as any other step (visible identically via `POST` and `GET`). `ProvisionWorkflowService.validateSynchronously` runs *only* this step, on the calling thread, before any async hand-off — so an invalid request never starts the background workflow and the `POST` response itself already reflects `status: FAILED` with the failed step's error. Every other step still runs through the normal async `execute()` loop. On success, the resolved `OrgType` and `source` are persisted onto the job row in one write (`JobStateWriter.markValidationResolved`) so a later resumed run can reconstruct `ProvisionContext` without re-validating.
 
-### 5b. `source` is the only orchestration-wide gate; `org_type` gating is local to the one step that needs it
+### 5b. `source` is the only gate — no step has a business condition of its own
 
-`source` (via `source_config.json` / `SourceStepConfigProvider`) is the **only** thing the orchestrator and step registration/seeding logic know how to gate on: which steps a given caller (e.g. `ETL_JOB`, `ADMIN_APP`) is allowed to trigger **at all**. It gates at *seed time* — `ProvisionWorkflowService.seedStepsForSource` (called once, right after `INITIAL_REQUEST_VALIDATION` succeeds) only ever creates a row for a step in `SourceStepConfigProvider.stepsFor(source)`. A step outside that set has no row, full stop — it can't show up as `SKIPPED`, `NOT_STARTED`, or anything else, because there's nothing in the DB for it. This directly serves the requirement that a job's step list only ever reports steps actually configured for its `source`.
+`source` (via `source_config.json` / `SourceStepConfigProvider`) is the **only** thing that decides whether a step runs at all, for a given caller (e.g. `ETL_JOB`, `ADMIN_APP`). It gates at *seed time* — `ProvisionWorkflowService.seedStepsForSource` (called once, right after `INITIAL_REQUEST_VALIDATION` succeeds) only ever creates a row for a step in `SourceStepConfigProvider.stepsFor(source)`. A step outside that set has no row, full stop — it can't show up in a response under any status, because there's nothing in the DB for it. This directly serves the requirement that a job's step list only ever reports steps actually configured for its `source`.
 
-The `execute()` loop still checks `context.isStepEnabledForSource(step.name())` too, as a second line of defense — it's a fast, purely in-memory guard (the set was already computed for seeding) that keeps the loop from touching a step that, for whatever reason, wasn't seeded:
+The `execute()` loop also checks `context.isStepEnabledForSource(step.name())`, as a second line of defense — it's a fast, purely in-memory guard (the set was already computed for seeding) that keeps the loop from touching a step that, for whatever reason, wasn't seeded:
 
 ```java
 if (step.order() < resumeFromOrder || !context.isStepEnabledForSource(step.name())) {
-    continue;   // no row for this step — nothing to update, not even a SKIPPED write
+    continue;   // no row for this step — nothing to update
 }
-if (!step.shouldRun(context)) {
-    stepExecutor.skip(jobId, step);   // row exists (source selected it); the step's own logic says it doesn't apply
-    continue;
-}
+jobStateWriter.markCurrentStep(jobId, step.name());
+stepExecutor.execute(jobId, step, context);
 ```
 
-`org_type` is deliberately **not** a second orchestration-wide gate the way it used to be. `ProvisionContext` no longer computes or exposes a generic "enabled sections" set — it only carries the resolved `orgType` value itself, for whichever individual step's `shouldRun` wants to read it. In this codebase that's exactly one mutually-exclusive pair, `EnablePrmLicensesStep`/`DisablePrmLicensesStep`, and each injects `DefaultConfigProvider` directly and calls `defaultConfigProvider.sectionsFor(context.getOrgType())` inside its own `shouldRun`, rather than the framework pre-computing it centrally and threading it through every step via `ProvisionContext`/`InitialRequestValidationStep`. The other 5 steps that used to check a config section (`AssignFspRecommendationModelsStep`, `SetupDefaultBrandingPrmPreferencesStep`, `SetupDefaultRfsUiPrmPreferencesStep`, `SetupDefaultCitationsStep`, `SetupFspBoostersStep`) no longer override `shouldRun` at all — they're unconditional once `source` selects them. This was a deliberate simplification: `org_type`-based gating was a general-purpose mechanism used by only a couple of steps, not a property every step needs access to, so it doesn't belong as a centrally-computed context field — it belongs local to the step(s) that actually consume it.
+`ProvisionStep` has no `shouldRun` hook at all — a step selected by `source` always executes, unconditionally. `org_type` is still validated and persisted onto the job (`markValidationResolved`), and `ProvisionContext` still carries the resolved `OrgType`, but no step reads it — `EnablePrmLicensesStep`/`DisablePrmLicensesStep` included, which used to be the one pair that read `org_type`-derived config (`default_config.json` / `DefaultConfigProvider`) to decide whether to run. That mechanism, along with `DefaultConfigProvider` and `ConfigSections`, has been removed entirely: it was a second, per-step gate layered on top of `source`, and the simpler model — `source` alone decides what runs — was judged not worth the extra moving part for two steps.
 
 `INITIAL_REQUEST_VALIDATION` is never itself gated by `source` — it always runs (and is always pre-seeded at job creation), since it's what validates `source` in the first place. Because unseeded steps are skipped over in the loop without ever calling `StepExecutor`, declared execution order among the steps that *are* seeded is naturally preserved — `source` restricts the set, it never reorders it.
 
@@ -116,7 +114,7 @@ Each `POST /organizations` is handed off to the `provisioningExecutor` pool (cor
 - **Remaining seeded steps** stay `NOT_STARTED` — no follow-up code needed, because they were pre-seeded that way (fail-fast). Steps `source` never selected have no row and were never a candidate to begin with.
 - **`INITIAL_REQUEST_VALIDATION` itself fails** → job `FAILED` with exactly one step row (itself); `source` was never resolved, so nothing else was ever seeded.
 - **Unexpected non-step exception** (e.g., DB blip while marking state) → same terminal treatment, logged at ERROR.
-- **Retry** (`POST` again with the same `org_uid`) → resumes at the first non-terminal step; already-`SUCCESS`/`SKIPPED` steps are left untouched.
+- **Retry** (`POST` again with the same `org_uid`) → resumes at the first non-terminal step; already-`SUCCESS` steps are left untouched.
 
 ## Enterprise concerns intentionally out of scope for the POC
 

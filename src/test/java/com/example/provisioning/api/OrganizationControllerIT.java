@@ -1,6 +1,5 @@
 package com.example.provisioning.api;
 
-import com.example.provisioning.domain.model.StepStatus;
 import com.example.provisioning.external.ExternalCallException;
 import com.example.provisioning.external.ExternalOrganizationClient;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -18,7 +17,6 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 
 import java.time.Duration;
-import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -39,41 +37,36 @@ class OrganizationControllerIT {
     @Autowired ObjectMapper objectMapper;
     @Autowired FlakyOncePrmPreferencesClient client;
 
-    // org_type only ever gates ENABLE_PRM_LICENSES/DISABLE_PRM_LICENSES —
-    // the one mutually-exclusive pair that still reads DefaultConfigProvider
-    // (see EnablePrmLicensesStep/DisablePrmLicensesStep). Every other step
-    // is unconditional once source=DEFAULT selects it.
-    // STANDARD's profile has "license" -> ENABLE runs, DISABLE is skipped.
-    private static final Set<String> STANDARD_SKIPPED = Set.of("DISABLE_PRM_LICENSES");
-
-    // INTERNAL's profile has no "license" -> DISABLE runs, ENABLE is skipped.
-    private static final Set<String> INTERNAL_SKIPPED = Set.of("ENABLE_PRM_LICENSES");
-
+    // org_type no longer gates any step's execution — ProvisionStep has
+    // no shouldRun hook at all, and no step reads DefaultConfigProvider
+    // (which no longer exists). These three tests just confirm each
+    // OrgType enum constant is accepted by validation and the job runs
+    // every source-selected step to SUCCESS, regardless of which one.
     @Test
-    void standardOrgType_runsEnableLicensesSkipsDisableLicenses() throws Exception {
+    void standardOrgType_runsAllSourceSelectedSteps() throws Exception {
         JsonNode accepted = postOrganization(
             requestJson(newOrgUid(), "STANDARD", "DEFAULT", "sav20006@gmail.com", "ext-1"));
         UUID jobId = UUID.fromString(accepted.get("jobId").asText());
 
-        awaitSuccessWithSkips(jobId, STANDARD_SKIPPED);
+        awaitAllStepsSucceed(jobId);
     }
 
     @Test
-    void internalOrgType_runsDisableLicensesSkipsEnableLicenses() throws Exception {
+    void internalOrgType_runsAllSourceSelectedSteps() throws Exception {
         JsonNode accepted = postOrganization(
             requestJson(newOrgUid(), "INTERNAL", "DEFAULT", "sav20006@gmail.com", "ext-2"));
         UUID jobId = UUID.fromString(accepted.get("jobId").asText());
 
-        awaitSuccessWithSkips(jobId, INTERNAL_SKIPPED);
+        awaitAllStepsSucceed(jobId);
     }
 
     @Test
-    void enterpriseOrgType_runsEnableLicensesSkipsDisableLicenses() throws Exception {
+    void enterpriseOrgType_runsAllSourceSelectedSteps() throws Exception {
         JsonNode accepted = postOrganization(
             requestJson(newOrgUid(), "ENTERPRISE", "DEFAULT", "sav20006@gmail.com", "ext-3"));
         UUID jobId = UUID.fromString(accepted.get("jobId").asText());
 
-        awaitSuccessWithSkips(jobId, Set.of("DISABLE_PRM_LICENSES"));
+        awaitAllStepsSucceed(jobId);
     }
 
     @Test
@@ -227,7 +220,7 @@ class OrganizationControllerIT {
         return objectMapper.readTree(result.getResponse().getContentAsString());
     }
 
-    private void awaitSuccessWithSkips(UUID jobId, Set<String> skipped) {
+    private void awaitAllStepsSucceed(UUID jobId) {
         Awaitility.await()
             .atMost(Duration.ofSeconds(10))
             .pollInterval(Duration.ofMillis(100))
@@ -237,17 +230,10 @@ class OrganizationControllerIT {
                 assertThat(state.get("progress").asInt()).isEqualTo(13);
                 assertThat(state.get("totalSteps").asInt()).isEqualTo(13);
                 assertThat(state.get("steps")).hasSize(13);
-                state.get("steps").forEach(s -> {
-                    String name = s.get("name").asText();
-                    if (name.equals("INITIAL_REQUEST_VALIDATION")) {
-                        assertThat(s.get("status").asText()).isEqualTo("SUCCESS");
-                        return;
-                    }
-                    String expected = skipped.contains(name)
-                        ? StepStatus.SKIPPED.name()
-                        : StepStatus.SUCCESS.name();
-                    assertThat(s.get("status").asText()).as("step %s", name).isEqualTo(expected);
-                });
+                state.get("steps").forEach(s ->
+                    assertThat(s.get("status").asText())
+                        .as("step %s", s.get("name").asText())
+                        .isEqualTo("SUCCESS"));
             });
     }
 

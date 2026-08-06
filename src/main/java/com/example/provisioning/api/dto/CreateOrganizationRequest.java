@@ -26,11 +26,9 @@ public record CreateOrganizationRequest(
     @NotBlank @Size(max = 255) String orgUid,
 
     @JsonProperty("org_type")
-    @Schema(description = "Organization tier; only affects steps whose own logic reads it "
-        + "— in practice just ENABLE_PRM_LICENSES/DISABLE_PRM_LICENSES, a mutually-exclusive "
-        + "pair gated by default_config.json's license section. Every other step is "
-        + "unconditional. Must exactly match one of the OrgType enum constants: "
-        + "STANDARD, INTERNAL, ENTERPRISE.",
+    @Schema(description = "Organization tier; validated and persisted onto the job, but has "
+        + "no effect on which steps run or how they behave — no step reads it. Must exactly "
+        + "match one of the OrgType enum constants: STANDARD, INTERNAL, ENTERPRISE.",
         example = "STANDARD", requiredMode = Schema.RequiredMode.REQUIRED)
     @NotBlank @Size(max = 64) String orgType,
 

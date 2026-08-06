@@ -25,11 +25,9 @@ import java.util.UUID;
  * {@code orgType} / {@code enabledSteps}. Only {@code enabledSteps} is
  * a general orchestration concern — a step not selected by the
  * request's {@code source} is skipped ({@link #isStepEnabledForSource(StepName)}).
- * {@code orgType} itself is exposed for the rare step whose own
- * {@code shouldRun} needs it (see {@code EnablePrmLicensesStep}) — it
- * reads {@code DefaultConfigProvider} directly rather than this class
- * exposing a generic, centrally-computed "enabled sections" concept
- * that most steps never use.
+ * {@code orgType} is exposed too, but no step currently reads it —
+ * {@code source} is the only thing that gates whether a step runs;
+ * {@link ProvisionStep} has no per-step business condition of its own.
  */
 @Getter
 public class ProvisionContext {

@@ -10,8 +10,12 @@ import com.example.provisioning.domain.model.StepName;
  * <p>Ordering is declared explicitly via {@link #order()} — steps
  * return values like 10, 20, 30 (gapped so insertions do not force a
  * rewrite). Uniqueness is enforced at startup by the step registry.
- * When retry support lands, a {@code RetryPolicy retryPolicy()} default
- * method fits naturally on this interface without touching the engine.
+ *
+ * <p>Whether a step runs at all for a given job is decided entirely
+ * by the request's {@code source} — see
+ * {@code SourceStepConfigProvider} / {@code source_config.json}. A
+ * step selected by {@code source} always executes; there is no
+ * further per-step business gate.
  */
 public interface ProvisionStep {
 
@@ -20,22 +24,4 @@ public interface ProvisionStep {
     int order();
 
     void execute(ProvisionContext context);
-
-    /**
-     * Business gate deciding whether this step applies to the current
-     * job. Steps that return {@code false} are recorded as
-     * {@link com.example.provisioning.domain.model.StepStatus#SKIPPED}
-     * and their {@link #execute(ProvisionContext)} is never called.
-     *
-     * <p>The common source of truth is the org type's config profile:
-     * a step runs only if its section is enabled, e.g.
-     * {@code context.hasSection(ConfigSections.LICENSE)}. Mutually
-     * exclusive steps invert the check (enable if the license section
-     * is present, disable if it is absent).
-     *
-     * <p>Defaults to {@code true}: unless a step opts out, it always runs.
-     */
-    default boolean shouldRun(ProvisionContext context) {
-        return true;
-    }
 }
