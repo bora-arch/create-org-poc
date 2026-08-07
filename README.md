@@ -178,9 +178,9 @@ single source of truth, mapping each `source` to the exact
 
 ```json
 {
-  "DEFAULT":  { "steps": ["CREATE_ORG_IN_FSP", "SETUP_ORG_IN_FSP", "...", "SETUP_FSP_BOOSTERS"] },
-  "ETL_JOB":  { "steps": ["CREATE_ORG_IN_FSP", "ENABLE_PRM_LICENSES"] },
-  "ADMIN_APP": { "steps": ["CREATE_ORG_IN_FSP", "SETUP_DEFAULT_VOCABULARIES_IN_CE"] }
+  "DEFAULT":   ["CREATE_ORG_IN_FSP", "SETUP_ORG_IN_FSP", "...", "SETUP_FSP_BOOSTERS"],
+  "ETL_JOB":   ["CREATE_ORG_IN_FSP", "ENABLE_PRM_LICENSES"],
+  "ADMIN_APP": ["CREATE_ORG_IN_FSP", "SETUP_DEFAULT_VOCABULARIES_IN_CE"]
 }
 ```
 

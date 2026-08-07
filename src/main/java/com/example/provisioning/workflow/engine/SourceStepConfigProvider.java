@@ -71,11 +71,11 @@ public class SourceStepConfigProvider {
 
     private static Map<String, Set<StepName>> load(ObjectMapper objectMapper) {
         try (InputStream in = new ClassPathResource(CONFIG_RESOURCE).getInputStream()) {
-            Map<String, Profile> raw =
-                objectMapper.readValue(in, new TypeReference<Map<String, Profile>>() { });
+            Map<String, List<String>> raw =
+                objectMapper.readValue(in, new TypeReference<Map<String, List<String>>>() { });
             Map<String, Set<StepName>> parsed = new LinkedHashMap<>();
-            raw.forEach((source, profile) -> {
-                Set<StepName> steps = profile.steps().stream()
+            raw.forEach((source, stepNames) -> {
+                Set<StepName> steps = stepNames.stream()
                     .map(StepName::valueOf)
                     .collect(Collectors.toCollection(LinkedHashSet::new));
                 parsed.put(source, Set.copyOf(steps));
@@ -84,13 +84,6 @@ public class SourceStepConfigProvider {
         } catch (IOException | IllegalArgumentException e) {
             throw new IllegalStateException(
                 "Failed to load " + CONFIG_RESOURCE + " — provisioning cannot start", e);
-        }
-    }
-
-    /** Shape of one source entry in {@code source_config.json}. */
-    private record Profile(List<String> steps) {
-        Profile {
-            steps = steps == null ? List.of() : steps;
         }
     }
 }
